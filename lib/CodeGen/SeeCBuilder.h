@@ -46,6 +46,7 @@ public:
       llvm::Value *StmtAddr = llvm::ConstantInt::get(i64, PtrInt);
       I->setMetadata(MDMapKindID, llvm::MDNode::get(Context, StmtAddr));
     }
+    // Don't attach anything if current Stmt is unknown
   }
 };
 
