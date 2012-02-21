@@ -2942,7 +2942,8 @@ void FragileHazards::emitReadHazard(CGBuilderTy &Builder) {
 void FragileHazards::emitHazardsInNewBlocks() {
   if (Locals.empty()) return;
 
-  CGBuilderTy Builder(CGF.getLLVMContext());
+  seec::MetadataInserter MDInserter(CGF.getLLVMContext());
+  CGBuilderTy Builder(CGF.getLLVMContext(), MDInserter);
 
   // Iterate through all blocks, skipping those prior to the try.
   for (llvm::Function::iterator

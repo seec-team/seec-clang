@@ -148,6 +148,7 @@ public:
   //===--------------------------------------------------------------------===//
 
   Value *Visit(Expr *E) {
+    seec::PushStmtForScope X(CGF.MDInserter, E);
     return StmtVisitor<ScalarExprEmitter, Value*>::Visit(E);
   }
     

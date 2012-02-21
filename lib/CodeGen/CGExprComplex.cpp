@@ -92,6 +92,7 @@ public:
   //===--------------------------------------------------------------------===//
 
   ComplexPairTy Visit(Expr *E) {
+    seec::PushStmtForScope X(CGF.MDInserter, E);
     return StmtVisitor<ComplexExprEmitter, ComplexPairTy>::Visit(E);
   }
     
