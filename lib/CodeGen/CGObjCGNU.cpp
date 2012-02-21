@@ -2346,7 +2346,8 @@ llvm::Function *CGObjCGNU::ModuleInitFunction() {
       &TheModule);
   llvm::BasicBlock *EntryBB =
       llvm::BasicBlock::Create(VMContext, "entry", LoadFunction);
-  CGBuilderTy Builder(VMContext);
+  seec::MetadataInserter MDInserter(VMContext);
+  CGBuilderTy Builder(VMContext, MDInserter);
   Builder.SetInsertPoint(EntryBB);
 
   llvm::FunctionType *FT =
