@@ -49,9 +49,16 @@ llvm::Value *CodeGenFunction::EmitCastToVoidPtr(llvm::Value *value) {
 /// block.
 llvm::AllocaInst *CodeGenFunction::CreateTempAlloca(llvm::Type *Ty,
                                                     const Twine &Name) {
+  llvm::AllocaInst *I;
+
   if (!Builder.isNamePreserving())
-    return new llvm::AllocaInst(Ty, 0, "", AllocaInsertPt);
-  return new llvm::AllocaInst(Ty, 0, Name, AllocaInsertPt);
+    I = new llvm::AllocaInst(Ty, 0, "", AllocaInsertPt);
+  else
+    I = new llvm::AllocaInst(Ty, 0, Name, AllocaInsertPt);
+
+  MDInserter.attachMetadata(I);
+
+  return I;
 }
 
 void CodeGenFunction::InitTempAlloca(llvm::AllocaInst *Var,
@@ -638,6 +645,8 @@ LValue CodeGenFunction::EmitCheckedLValue(const Expr *E) {
 /// length type, this is not possible.
 ///
 LValue CodeGenFunction::EmitLValue(const Expr *E) {
+  seec::PushStmtForScope X(MDInserter, E);
+
   switch (E->getStmtClass()) {
   default: return EmitUnsupportedLValue(E, "l-value expression");
 

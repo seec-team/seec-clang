@@ -11,15 +11,16 @@
 #define CLANG_CODEGEN_CGBUILDER_H
 
 #include "llvm/Support/IRBuilder.h"
+#include "SeeCBuilder.h"
 
 namespace clang {
 namespace CodeGen {
 
 // Don't preserve names on values in an optimized build.
 #ifdef NDEBUG
-typedef llvm::IRBuilder<false> CGBuilderTy;
+typedef seec::SeeCIRBuilder<false> CGBuilderTy;
 #else
-typedef llvm::IRBuilder<> CGBuilderTy;
+typedef seec::SeeCIRBuilder<> CGBuilderTy;
 #endif
 
 }  // end namespace CodeGen

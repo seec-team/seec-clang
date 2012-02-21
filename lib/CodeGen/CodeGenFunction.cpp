@@ -31,7 +31,8 @@ using namespace CodeGen;
 CodeGenFunction::CodeGenFunction(CodeGenModule &cgm)
   : CodeGenTypeCache(cgm), CGM(cgm),
     Target(CGM.getContext().getTargetInfo()),
-    Builder(cgm.getModule().getContext()),
+    MDInserter(cgm.getModule().getContext()),
+    Builder(cgm.getModule().getContext(), MDInserter),
     AutoreleaseResult(false), BlockInfo(0), BlockPointer(0),
     LambdaThisCaptureField(0), NormalCleanupDest(0), NextCleanupDestIndex(1),
     FirstBlockInfo(0), EHResumeBlock(0), ExceptionSlot(0), EHSelectorSlot(0),
@@ -831,7 +832,7 @@ llvm::BasicBlock *CodeGenFunction::GetIndirectGotoBlock() {
   // If we already made the indirect branch for indirect goto, return its block.
   if (IndirectBranch) return IndirectBranch->getParent();
   
-  CGBuilderTy TmpBuilder(createBasicBlock("indirectgoto"));
+  CGBuilderTy TmpBuilder(createBasicBlock("indirectgoto"), MDInserter);
   
   // Create the PHI node that indirect gotos will add entries to.
   llvm::Value *DestVal = TmpBuilder.CreatePHI(Int8PtrTy, 0,

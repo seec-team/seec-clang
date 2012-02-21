@@ -43,6 +43,8 @@ void CodeGenFunction::EmitStopPoint(const Stmt *S) {
 void CodeGenFunction::EmitStmt(const Stmt *S) {
   assert(S && "Null statement?");
 
+  seec::PushStmtForScope X(MDInserter, S);
+
   // These statements have their own debug info handling.
   if (EmitSimpleStmt(S))
     return;
