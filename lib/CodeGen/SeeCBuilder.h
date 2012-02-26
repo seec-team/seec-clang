@@ -46,12 +46,6 @@ public:
       llvm::Value *StmtAddr = llvm::ConstantInt::get(i64, PtrInt);
       I->setMetadata(MDMapKindID, llvm::MDNode::get(Context, StmtAddr));
     }
-    else {
-      // Make a constant 0
-      llvm::Type *i64 = llvm::Type::getInt64Ty(Context);
-      llvm::Value *StmtAddr = llvm::ConstantInt::get(i64, 0);
-      I->setMetadata(MDMapKindID, llvm::MDNode::get(Context, StmtAddr));
-    }
   }
 };
 
