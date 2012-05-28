@@ -417,6 +417,7 @@ void ASTDeclWriter::VisitObjCMethodDecl(ObjCMethodDecl *D) {
   Record.push_back(D->isVariadic());
   Record.push_back(D->isSynthesized());
   Record.push_back(D->isDefined());
+  Record.push_back(D->IsOverriding);
 
   Record.push_back(D->IsRedeclaration);
   Record.push_back(D->HasRedeclaration);
@@ -1054,7 +1055,7 @@ void ASTDeclWriter::VisitClassTemplateDecl(ClassTemplateDecl *D) {
   VisitRedeclarableTemplateDecl(D);
 
   if (D->isFirstDeclaration()) {
-    typedef llvm::FoldingSet<ClassTemplateSpecializationDecl> CTSDSetTy;
+    typedef llvm::FoldingSetVector<ClassTemplateSpecializationDecl> CTSDSetTy;
     CTSDSetTy &CTSDSet = D->getSpecializations();
     Record.push_back(CTSDSet.size());
     for (CTSDSetTy::iterator I=CTSDSet.begin(), E = CTSDSet.end(); I!=E; ++I) {
@@ -1062,7 +1063,8 @@ void ASTDeclWriter::VisitClassTemplateDecl(ClassTemplateDecl *D) {
       Writer.AddDeclRef(&*I, Record);
     }
 
-    typedef llvm::FoldingSet<ClassTemplatePartialSpecializationDecl> CTPSDSetTy;
+    typedef llvm::FoldingSetVector<ClassTemplatePartialSpecializationDecl>
+      CTPSDSetTy;
     CTPSDSetTy &CTPSDSet = D->getPartialSpecializations();
     Record.push_back(CTPSDSet.size());
     for (CTPSDSetTy::iterator I=CTPSDSet.begin(), E=CTPSDSet.end(); I!=E; ++I) {
@@ -1146,7 +1148,7 @@ void ASTDeclWriter::VisitFunctionTemplateDecl(FunctionTemplateDecl *D) {
 
     // Write the function specialization declarations.
     Record.push_back(D->getSpecializations().size());
-    for (llvm::FoldingSet<FunctionTemplateSpecializationInfo>::iterator
+    for (llvm::FoldingSetVector<FunctionTemplateSpecializationInfo>::iterator
            I = D->getSpecializations().begin(),
            E = D->getSpecializations().end()   ; I != E; ++I) {
       assert(I->Function->isCanonicalDecl() &&

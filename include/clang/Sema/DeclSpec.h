@@ -853,12 +853,14 @@ public:
     assert(Other.Kind == IK_Identifier && "Cannot copy non-identifiers");
   }
 
-  /// \brief Destroy this unqualified-id.
-  ~UnqualifiedId() { clear(); }
-  
   /// \brief Clear out this unqualified-id, setting it to default (invalid) 
   /// state.
-  void clear();
+  void clear() {
+    Kind = IK_Identifier;
+    Identifier = 0;
+    StartLocation = SourceLocation();
+    EndLocation = SourceLocation();
+  }
   
   /// \brief Determine whether this unqualified-id refers to a valid name.
   bool isValid() const { return StartLocation.isValid(); }
@@ -1150,10 +1152,6 @@ struct DeclaratorChunk {
       /// \brief Pointer to the expression in the noexcept-specifier of this
       /// function, if it has one.
       Expr *NoexceptExpr;
-  
-      /// \brief Pointer to the cached tokens for an exception-specification
-      /// that has not yet been parsed.
-      CachedTokens *ExceptionSpecTokens;
     };
 
     /// TrailingReturnType - If this isn't null, it's the trailing return type
@@ -1176,8 +1174,6 @@ struct DeclaratorChunk {
         delete[] ArgInfo;
       if (getExceptionSpecType() == EST_Dynamic)
         delete[] Exceptions;
-      else if (getExceptionSpecType() == EST_Delayed)
-        delete ExceptionSpecTokens;
     }
 
     /// isKNRPrototype - Return true if this is a K&R style identifier list,
@@ -1353,7 +1349,6 @@ struct DeclaratorChunk {
                                      SourceRange *ExceptionRanges,
                                      unsigned NumExceptions,
                                      Expr *NoexceptExpr,
-                                     CachedTokens *ExceptionSpecTokens,
                                      SourceLocation LocalRangeBegin,
                                      SourceLocation LocalRangeEnd,
                                      Declarator &TheDeclarator,

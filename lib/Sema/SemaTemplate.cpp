@@ -354,12 +354,14 @@ void Sema::LookupTemplateName(LookupResult &Found,
     return;
   }
 
-  if (S && !ObjectType.isNull() && !ObjectTypeSearchedInScope) {
-    // C++ [basic.lookup.classref]p1:
+  if (S && !ObjectType.isNull() && !ObjectTypeSearchedInScope &&
+      !(getLangOpts().CPlusPlus0x && !Found.empty())) {
+    // C++03 [basic.lookup.classref]p1:
     //   [...] If the lookup in the class of the object expression finds a
     //   template, the name is also looked up in the context of the entire
     //   postfix-expression and [...]
     //
+    // Note: C++11 does not perform this second lookup.
     LookupResult FoundOuter(*this, Found.getLookupName(), Found.getNameLoc(),
                             LookupOrdinaryName);
     LookupName(FoundOuter, S);
@@ -2436,6 +2438,45 @@ bool Sema::CheckTemplateTypeArgument(TemplateTypeParmDecl *Param,
 
     return true;
   }
+  case TemplateArgument::Expression: {
+    // We have a template type parameter but the template argument is an
+    // expression; see if maybe it is missing the "typename" keyword.
+    CXXScopeSpec SS;
+    DeclarationNameInfo NameInfo;
+
+    if (DeclRefExpr *ArgExpr = dyn_cast<DeclRefExpr>(Arg.getAsExpr())) {
+      SS.Adopt(ArgExpr->getQualifierLoc());
+      NameInfo = ArgExpr->getNameInfo();
+    } else if (DependentScopeDeclRefExpr *ArgExpr =
+               dyn_cast<DependentScopeDeclRefExpr>(Arg.getAsExpr())) {
+      SS.Adopt(ArgExpr->getQualifierLoc());
+      NameInfo = ArgExpr->getNameInfo();
+    } else if (CXXDependentScopeMemberExpr *ArgExpr =
+               dyn_cast<CXXDependentScopeMemberExpr>(Arg.getAsExpr())) {
+      SS.Adopt(ArgExpr->getQualifierLoc());
+      NameInfo = ArgExpr->getMemberNameInfo();
+    }
+
+    if (NameInfo.getName()) {
+      LookupResult Result(*this, NameInfo, LookupOrdinaryName);
+      LookupParsedName(Result, CurScope, &SS);
+
+      bool CouldBeType = Result.getResultKind() ==
+          LookupResult::NotFoundInCurrentInstantiation;
+
+      for (LookupResult::iterator I = Result.begin(), IEnd = Result.end();
+           !CouldBeType && I != IEnd; ++I) {
+        CouldBeType = isa<TypeDecl>(*I);
+      }
+      if (CouldBeType) {
+        SourceLocation Loc = AL.getSourceRange().getBegin();
+        Diag(Loc, diag::err_template_arg_must_be_type_suggest);
+        Diag(Param->getLocation(), diag::note_template_param_here);
+        return true;
+      }
+    }
+    // fallthrough
+  }
   default: {
     // We have a template type parameter but the template argument
     // is not a type.
@@ -4111,8 +4152,20 @@ ExprResult Sema::CheckTemplateArgument(NonTypeTemplateParmDecl *Param,
       Diag(Param->getLocation(), diag::note_template_param_here);
       return ExprError();
     } else if (!Arg->isValueDependent()) {
-      Arg = VerifyIntegerConstantExpression(Arg, &Value,
-        PDiag(diag::err_template_arg_not_ice) << ArgType, false).take();
+      class TmplArgICEDiagnoser : public VerifyICEDiagnoser {
+        QualType T;
+        
+      public:
+        TmplArgICEDiagnoser(QualType T) : T(T) { }
+        
+        virtual void diagnoseNotICE(Sema &S, SourceLocation Loc,
+                                    SourceRange SR) {
+          S.Diag(Loc, diag::err_template_arg_not_ice) << T << SR;
+        }
+      } Diagnoser(ArgType);
+
+      Arg = VerifyIntegerConstantExpression(Arg, &Value, Diagnoser,
+                                            false).take();
       if (!Arg)
         return ExprError();
     }
@@ -6909,6 +6962,42 @@ Sema::ActOnTypenameType(Scope *S,
 }
 
 
+/// Determine whether this failed name lookup should be treated as being
+/// disabled by a usage of std::enable_if.
+static bool isEnableIf(NestedNameSpecifierLoc NNS, const IdentifierInfo &II,
+                       SourceRange &CondRange) {
+  // We must be looking for a ::type...
+  if (!II.isStr("type"))
+    return false;
+
+  // ... within an explicitly-written template specialization...
+  if (!NNS || !NNS.getNestedNameSpecifier()->getAsType())
+    return false;
+  TypeLoc EnableIfTy = NNS.getTypeLoc();
+  TemplateSpecializationTypeLoc *EnableIfTSTLoc =
+    dyn_cast<TemplateSpecializationTypeLoc>(&EnableIfTy);
+  if (!EnableIfTSTLoc || EnableIfTSTLoc->getNumArgs() == 0)
+    return false;
+  const TemplateSpecializationType *EnableIfTST =
+    cast<TemplateSpecializationType>(EnableIfTSTLoc->getTypePtr());
+
+  // ... which names a complete class template declaration...
+  const TemplateDecl *EnableIfDecl =
+    EnableIfTST->getTemplateName().getAsTemplateDecl();
+  if (!EnableIfDecl || EnableIfTST->isIncompleteType())
+    return false;
+
+  // ... called "enable_if".
+  const IdentifierInfo *EnableIfII =
+    EnableIfDecl->getDeclName().getAsIdentifierInfo();
+  if (!EnableIfII || !EnableIfII->isStr("enable_if"))
+    return false;
+
+  // Assume the first template argument is the condition.
+  CondRange = EnableIfTSTLoc->getArgLoc(0).getSourceRange();
+  return true;
+}
+
 /// \brief Build the type that describes a C++ typename specifier,
 /// e.g., "typename T::type".
 QualType
@@ -6945,9 +7034,19 @@ Sema::CheckTypenameType(ElaboratedTypeKeyword Keyword,
   unsigned DiagID = 0;
   Decl *Referenced = 0;
   switch (Result.getResultKind()) {
-  case LookupResult::NotFound:
+  case LookupResult::NotFound: {
+    // If we're looking up 'type' within a template named 'enable_if', produce
+    // a more specific diagnostic.
+    SourceRange CondRange;
+    if (isEnableIf(QualifierLoc, II, CondRange)) {
+      Diag(CondRange.getBegin(), diag::err_typename_nested_not_found_enable_if)
+        << Ctx << CondRange;
+      return QualType();
+    }
+
     DiagID = diag::err_typename_nested_not_found;
     break;
+  }
 
   case LookupResult::FoundUnresolvedValue: {
     // We found a using declaration that is a value. Most likely, the using

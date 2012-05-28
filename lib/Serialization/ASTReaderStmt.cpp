@@ -873,6 +873,7 @@ void ASTStmtReader::VisitObjCProtocolExpr(ObjCProtocolExpr *E) {
   VisitExpr(E);
   E->setProtocol(ReadDeclAs<ObjCProtocolDecl>(Record, Idx));
   E->setAtLoc(ReadSourceLocation(Record, Idx));
+  E->ProtoLoc = ReadSourceLocation(Record, Idx);
   E->setRParenLoc(ReadSourceLocation(Record, Idx));
 }
 
@@ -1074,7 +1075,8 @@ void ASTStmtReader::VisitMSDependentExistsStmt(MSDependentExistsStmt *S) {
 
 void ASTStmtReader::VisitCXXOperatorCallExpr(CXXOperatorCallExpr *E) {
   VisitCallExpr(E);
-  E->setOperator((OverloadedOperatorKind)Record[Idx++]);
+  E->Operator = (OverloadedOperatorKind)Record[Idx++];
+  E->Range = Reader.ReadSourceRange(F, Record, Idx);
 }
 
 void ASTStmtReader::VisitCXXConstructExpr(CXXConstructExpr *E) {

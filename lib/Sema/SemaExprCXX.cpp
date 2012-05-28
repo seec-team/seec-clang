@@ -379,6 +379,10 @@ Sema::ActOnCXXTypeid(SourceLocation OpLoc, SourceLocation LParenLoc,
       return ExprError(Diag(OpLoc, diag::err_need_header_before_typeid));
   }
 
+  if (!getLangOpts().RTTI) {
+    return ExprError(Diag(OpLoc, diag::err_no_typeid_with_fno_rtti));
+  }
+
   QualType TypeInfoType = Context.getTypeDeclType(CXXTypeInfoDecl);
 
   if (isType) {
@@ -584,14 +588,13 @@ ExprResult Sema::CheckCXXThrowOperand(SourceLocation ThrowLoc, Expr *E,
   }
   if (!isPointer || !Ty->isVoidType()) {
     if (RequireCompleteType(ThrowLoc, Ty,
-                            PDiag(isPointer ? diag::err_throw_incomplete_ptr
-                                            : diag::err_throw_incomplete)
-                              << E->getSourceRange()))
+                            isPointer? diag::err_throw_incomplete_ptr
+                                     : diag::err_throw_incomplete,
+                            E->getSourceRange()))
       return ExprError();
 
     if (RequireNonAbstractType(ThrowLoc, E->getType(),
-                               PDiag(diag::err_throw_abstract_type)
-                                 << E->getSourceRange()))
+                               diag::err_throw_abstract_type, E))
       return ExprError();
   }
 
@@ -693,10 +696,6 @@ Sema::CXXThisScopeRAII::~CXXThisScopeRAII() {
 }
 
 void Sema::CheckCXXThisCapture(SourceLocation Loc, bool Explicit) {
-  if (getLangOpts().CPlusPlus0x &&
-      !dyn_cast_or_null<CXXMethodDecl>(getFunctionLevelDeclContext()))
-    Diag(Loc, diag::warn_cxx98_compat_this_outside_method);
-
   // We don't need to capture this in an unevaluated context.
   if (ExprEvalContexts.back().Context == Unevaluated && !Explicit)
     return;
@@ -843,8 +842,7 @@ Sema::BuildCXXTypeConstructExpr(TypeSourceInfo *TInfo,
 
   if (!Ty->isVoidType() &&
       RequireCompleteType(TyBeginLoc, ElemTy,
-                          PDiag(diag::err_invalid_incomplete_type_use)
-                            << FullRange))
+                          diag::err_invalid_incomplete_type_use, FullRange))
     return ExprError();
 
   if (RequireNonAbstractType(TyBeginLoc, Ty,
@@ -988,8 +986,10 @@ Sema::ActOnCXXNew(SourceLocation StartLoc, bool UseGlobal,
       DeclaratorChunk::ArrayTypeInfo &Array = D.getTypeObject(I).Arr;
       if (Expr *NumElts = (Expr *)Array.NumElts) {
         if (!NumElts->isTypeDependent() && !NumElts->isValueDependent()) {
-          Array.NumElts = VerifyIntegerConstantExpression(NumElts, 0,
-            PDiag(diag::err_new_array_nonconst)).take();
+          Array.NumElts
+            = VerifyIntegerConstantExpression(NumElts, 0,
+                                              diag::err_new_array_nonconst)
+                .take();
           if (!Array.NumElts)
             return ExprError();
         }
@@ -1154,19 +1154,64 @@ Sema::BuildCXXNew(SourceLocation StartLoc, bool UseGlobal,
   //   enumeration type, or a class type for which a single non-explicit
   //   conversion function to integral or unscoped enumeration type exists.
   if (ArraySize && !ArraySize->isTypeDependent()) {
-    ExprResult ConvertedSize = ConvertToIntegralOrEnumerationType(
-      StartLoc, ArraySize,
-      PDiag(diag::err_array_size_not_integral) << getLangOpts().CPlusPlus0x,
-      PDiag(diag::err_array_size_incomplete_type)
-        << ArraySize->getSourceRange(),
-      PDiag(diag::err_array_size_explicit_conversion),
-      PDiag(diag::note_array_size_conversion),
-      PDiag(diag::err_array_size_ambiguous_conversion),
-      PDiag(diag::note_array_size_conversion),
-      PDiag(getLangOpts().CPlusPlus0x ?
-              diag::warn_cxx98_compat_array_size_conversion :
-              diag::ext_array_size_conversion),
-      /*AllowScopedEnumerations*/ false);
+    class SizeConvertDiagnoser : public ICEConvertDiagnoser {
+      Expr *ArraySize;
+      
+    public:
+      SizeConvertDiagnoser(Expr *ArraySize)
+        : ICEConvertDiagnoser(false, false), ArraySize(ArraySize) { }
+      
+      virtual DiagnosticBuilder diagnoseNotInt(Sema &S, SourceLocation Loc,
+                                               QualType T) {
+        return S.Diag(Loc, diag::err_array_size_not_integral)
+                 << S.getLangOpts().CPlusPlus0x << T;
+      }
+      
+      virtual DiagnosticBuilder diagnoseIncomplete(Sema &S, SourceLocation Loc,
+                                                   QualType T) {
+        return S.Diag(Loc, diag::err_array_size_incomplete_type)
+                 << T << ArraySize->getSourceRange();
+      }
+      
+      virtual DiagnosticBuilder diagnoseExplicitConv(Sema &S,
+                                                     SourceLocation Loc,
+                                                     QualType T,
+                                                     QualType ConvTy) {
+        return S.Diag(Loc, diag::err_array_size_explicit_conversion) << T << ConvTy;
+      }
+      
+      virtual DiagnosticBuilder noteExplicitConv(Sema &S,
+                                                 CXXConversionDecl *Conv,
+                                                 QualType ConvTy) {
+        return S.Diag(Conv->getLocation(), diag::note_array_size_conversion)
+                 << ConvTy->isEnumeralType() << ConvTy;
+      }
+      
+      virtual DiagnosticBuilder diagnoseAmbiguous(Sema &S, SourceLocation Loc,
+                                                  QualType T) {
+        return S.Diag(Loc, diag::err_array_size_ambiguous_conversion) << T;
+      }
+      
+      virtual DiagnosticBuilder noteAmbiguous(Sema &S, CXXConversionDecl *Conv,
+                                              QualType ConvTy) {
+        return S.Diag(Conv->getLocation(), diag::note_array_size_conversion)
+                 << ConvTy->isEnumeralType() << ConvTy;
+      }
+      
+      virtual DiagnosticBuilder diagnoseConversion(Sema &S, SourceLocation Loc,
+                                                   QualType T,
+                                                   QualType ConvTy) {
+        return S.Diag(Loc,
+                      S.getLangOpts().CPlusPlus0x
+                        ? diag::warn_cxx98_compat_array_size_conversion
+                        : diag::ext_array_size_conversion)
+                 << T << ConvTy->isEnumeralType() << ConvTy;
+      }
+    } SizeDiagnoser(ArraySize);
+
+    ExprResult ConvertedSize
+      = ConvertToIntegralOrEnumerationType(StartLoc, ArraySize, SizeDiagnoser,
+                                           /*AllowScopedEnumerations*/ false);
     if (ConvertedSize.isInvalid())
       return ExprError();
 
@@ -1405,9 +1450,7 @@ bool Sema::CheckAllocatedType(QualType AllocType, SourceLocation Loc,
     return Diag(Loc, diag::err_bad_new_type)
       << AllocType << 1 << R;
   else if (!AllocType->isDependentType() &&
-           RequireCompleteType(Loc, AllocType,
-                               PDiag(diag::err_new_incomplete_type)
-                                 << R))
+           RequireCompleteType(Loc, AllocType, diag::err_new_incomplete_type,R))
     return true;
   else if (RequireNonAbstractType(Loc, AllocType,
                                   diag::err_allocation_of_abstract_type))
@@ -2018,7 +2061,7 @@ Sema::ActOnCXXDelete(SourceLocation StartLoc, bool UseGlobal,
 
     if (const RecordType *Record = Type->getAs<RecordType>()) {
       if (RequireCompleteType(StartLoc, Type,
-                              PDiag(diag::err_delete_incomplete_class_type)))
+                              diag::err_delete_incomplete_class_type))
         return ExprError();
 
       SmallVector<CXXConversionDecl*, 4> ObjectPtrConversions;
@@ -2088,8 +2131,7 @@ Sema::ActOnCXXDelete(SourceLocation StartLoc, bool UseGlobal,
         << Type << Ex.get()->getSourceRange());
     } else if (!Pointee->isDependentType()) {
       if (!RequireCompleteType(StartLoc, Pointee,
-                               PDiag(diag::warn_delete_incomplete)
-                                 << Ex.get()->getSourceRange())) {
+                               diag::warn_delete_incomplete, Ex.get())) {
         if (const RecordType *RT = PointeeElem->getAs<RecordType>())
           PointeeRD = cast<CXXRecordDecl>(RT->getDecl());
       }
@@ -3619,7 +3661,7 @@ static uint64_t EvaluateArrayTypeTrait(Sema &Self, ArrayTypeTrait ATT,
     llvm::APSInt Value;
     uint64_t Dim;
     if (Self.VerifyIntegerConstantExpression(DimExpr, &Value,
-          Self.PDiag(diag::err_dimension_expr_not_constant_integer),
+          diag::err_dimension_expr_not_constant_integer,
           false).isInvalid())
       return 0;
     if (Value.isSigned() && Value.isNegative()) {
@@ -3771,8 +3813,8 @@ QualType Sema::CheckPointerToMemberOperands(ExprResult &LHS, ExprResult &RHS,
 
   if (!Context.hasSameUnqualifiedType(Class, LHSType)) {
     // If we want to check the hierarchy, we need a complete type.
-    if (RequireCompleteType(Loc, LHSType, PDiag(diag::err_bad_memptr_lhs)
-        << OpSpelling << (int)isIndirect)) {
+    if (RequireCompleteType(Loc, LHSType, diag::err_bad_memptr_lhs,
+                            OpSpelling, (int)isIndirect)) {
       return QualType();
     }
     CXXBasePaths Paths(/*FindAmbiguities=*/true, /*RecordPaths=*/true,
@@ -4737,11 +4779,11 @@ ExprResult Sema::ActOnDecltypeExpression(Expr *E) {
     CXXDestructorDecl *Destructor = LookupDestructor(RD);
     Temp->setDestructor(Destructor);
 
-    MarkFunctionReferenced(E->getExprLoc(), Destructor);
-    CheckDestructorAccess(E->getExprLoc(), Destructor,
+    MarkFunctionReferenced(Bind->getExprLoc(), Destructor);
+    CheckDestructorAccess(Bind->getExprLoc(), Destructor,
                           PDiag(diag::err_access_dtor_temp)
-                            << E->getType());
-    DiagnoseUseOfDecl(Destructor, E->getExprLoc());
+                            << Bind->getType());
+    DiagnoseUseOfDecl(Destructor, Bind->getExprLoc());
 
     // We need a cleanup, but we don't need to remember the temporary.
     ExprNeedsCleanups = true;
@@ -4837,8 +4879,7 @@ Sema::ActOnStartCXXMemberReference(Scope *S, Expr *Base, SourceLocation OpLoc,
   //   the member function body.
   if (!BaseType->isDependentType() &&
       !isThisOutsideMemberFunctionBody(BaseType) &&
-      RequireCompleteType(OpLoc, BaseType,
-                          PDiag(diag::err_incomplete_member_access)))
+      RequireCompleteType(OpLoc, BaseType, diag::err_incomplete_member_access))
     return ExprError();
 
   // C++ [basic.lookup.classref]p2:
@@ -5226,6 +5267,61 @@ ExprResult Sema::ActOnNoexceptExpr(SourceLocation KeyLoc, SourceLocation,
   return BuildCXXNoexceptExpr(KeyLoc, Operand, RParen);
 }
 
+static bool IsSpecialDiscardedValue(Expr *E) {
+  // In C++11, discarded-value expressions of a certain form are special,
+  // according to [expr]p10:
+  //   The lvalue-to-rvalue conversion (4.1) is applied only if the
+  //   expression is an lvalue of volatile-qualified type and it has
+  //   one of the following forms:
+  E = E->IgnoreParens();
+
+  //   - id-expression (5.1.1),
+  if (isa<DeclRefExpr>(E))
+    return true;
+
+  //   - subscripting (5.2.1),
+  if (isa<ArraySubscriptExpr>(E))
+    return true;
+
+  //   - class member access (5.2.5),
+  if (isa<MemberExpr>(E))
+    return true;
+
+  //   - indirection (5.3.1),
+  if (UnaryOperator *UO = dyn_cast<UnaryOperator>(E))
+    if (UO->getOpcode() == UO_Deref)
+      return true;
+
+  if (BinaryOperator *BO = dyn_cast<BinaryOperator>(E)) {
+    //   - pointer-to-member operation (5.5),
+    if (BO->isPtrMemOp())
+      return true;
+
+    //   - comma expression (5.18) where the right operand is one of the above.
+    if (BO->getOpcode() == BO_Comma)
+      return IsSpecialDiscardedValue(BO->getRHS());
+  }
+
+  //   - conditional expression (5.16) where both the second and the third
+  //     operands are one of the above, or
+  if (ConditionalOperator *CO = dyn_cast<ConditionalOperator>(E))
+    return IsSpecialDiscardedValue(CO->getTrueExpr()) &&
+           IsSpecialDiscardedValue(CO->getFalseExpr());
+  // The related edge case of "*x ?: *x".
+  if (BinaryConditionalOperator *BCO =
+          dyn_cast<BinaryConditionalOperator>(E)) {
+    if (OpaqueValueExpr *OVE = dyn_cast<OpaqueValueExpr>(BCO->getTrueExpr()))
+      return IsSpecialDiscardedValue(OVE->getSourceExpr()) &&
+             IsSpecialDiscardedValue(BCO->getFalseExpr());
+  }
+
+  // Objective-C++ extensions to the rule.
+  if (isa<PseudoObjectExpr>(E) || isa<ObjCIvarRefExpr>(E))
+    return true;
+
+  return false;
+}
+
 /// Perform the conversions required for an expression used in a
 /// context that ignores the result.
 ExprResult Sema::IgnoredValueConversions(Expr *E) {
@@ -5250,8 +5346,21 @@ ExprResult Sema::IgnoredValueConversions(Expr *E) {
     return Owned(E);
   }
 
-  // Otherwise, this rule does not apply in C++, at least not for the moment.
-  if (getLangOpts().CPlusPlus) return Owned(E);
+  if (getLangOpts().CPlusPlus)  {
+    // The C++11 standard defines the notion of a discarded-value expression;
+    // normally, we don't need to do anything to handle it, but if it is a
+    // volatile lvalue with a special form, we perform an lvalue-to-rvalue
+    // conversion.
+    if (getLangOpts().CPlusPlus0x && E->isGLValue() &&
+        E->getType().isVolatileQualified() &&
+        IsSpecialDiscardedValue(E)) {
+      ExprResult Res = DefaultLvalueConversion(E);
+      if (Res.isInvalid())
+        return Owned(E);
+      E = Res.take();
+    }
+    return Owned(E);
+  }
 
   // GCC seems to also exclude expressions of incomplete enum type.
   if (const EnumType *T = E->getType()->getAs<EnumType>()) {
@@ -5273,7 +5382,7 @@ ExprResult Sema::IgnoredValueConversions(Expr *E) {
   return Owned(E);
 }
 
-ExprResult Sema::ActOnFinishFullExpr(Expr *FE) {
+ExprResult Sema::ActOnFinishFullExpr(Expr *FE, SourceLocation CC) {
   ExprResult FullExpr = Owned(FE);
 
   if (!FullExpr.get())
@@ -5299,7 +5408,7 @@ ExprResult Sema::ActOnFinishFullExpr(Expr *FE) {
   if (FullExpr.isInvalid())
     return ExprError();
 
-  CheckImplicitConversions(FullExpr.get(), FullExpr.get()->getExprLoc());
+  CheckImplicitConversions(FullExpr.get(), CC);
   return MaybeCreateExprWithCleanups(FullExpr);
 }
 

@@ -158,14 +158,14 @@ getLVForTemplateArgumentList(const TemplateArgumentList &TArgs,
   return getLVForTemplateArgumentList(TArgs.data(), TArgs.size(), OnlyTemplate);
 }
 
-static bool shouldConsiderTemplateLV(const FunctionDecl *fn,
+static bool shouldConsiderTemplateVis(const FunctionDecl *fn,
                                const FunctionTemplateSpecializationInfo *spec) {
-  return !(spec->isExplicitSpecialization() &&
-           fn->hasAttr<VisibilityAttr>());
+  return !fn->hasAttr<VisibilityAttr>() || spec->isExplicitSpecialization();
 }
 
-static bool shouldConsiderTemplateLV(const ClassTemplateSpecializationDecl *d) {
-  return !(d->isExplicitSpecialization() && d->hasAttr<VisibilityAttr>());
+static bool
+shouldConsiderTemplateVis(const ClassTemplateSpecializationDecl *d) {
+  return !d->hasAttr<VisibilityAttr>() || d->isExplicitSpecialization();
 }
 
 static LinkageInfo getLVForNamespaceScopeDecl(const NamedDecl *D,
@@ -376,12 +376,16 @@ static LinkageInfo getLVForNamespaceScopeDecl(const NamedDecl *D,
     // this is an explicit specialization with a visibility attribute.
     if (FunctionTemplateSpecializationInfo *specInfo
                                = Function->getTemplateSpecializationInfo()) {
-      if (shouldConsiderTemplateLV(Function, specInfo)) {
-        LV.merge(getLVForDecl(specInfo->getTemplate(),
-                              true));
-        const TemplateArgumentList &templateArgs = *specInfo->TemplateArguments;
-        LV.mergeWithMin(getLVForTemplateArgumentList(templateArgs,
-                                                     OnlyTemplate));
+      LinkageInfo TempLV = getLVForDecl(specInfo->getTemplate(), true);
+      const TemplateArgumentList &templateArgs = *specInfo->TemplateArguments;
+      LinkageInfo ArgsLV = getLVForTemplateArgumentList(templateArgs,
+                                                        OnlyTemplate);
+      if (shouldConsiderTemplateVis(Function, specInfo)) {
+        LV.merge(TempLV);
+        LV.mergeWithMin(ArgsLV);
+      } else {
+        LV.mergeLinkage(TempLV);
+        LV.mergeLinkage(ArgsLV);
       }
     }
 
@@ -400,15 +404,19 @@ static LinkageInfo getLVForNamespaceScopeDecl(const NamedDecl *D,
     // linkage of the template and template arguments.
     if (const ClassTemplateSpecializationDecl *spec
           = dyn_cast<ClassTemplateSpecializationDecl>(Tag)) {
-      if (shouldConsiderTemplateLV(spec)) {
-        // From the template.
-        LV.merge(getLVForDecl(spec->getSpecializedTemplate(),
-                              true));
+      // From the template.
+      LinkageInfo TempLV = getLVForDecl(spec->getSpecializedTemplate(), true);
 
-        // The arguments at which the template was instantiated.
-        const TemplateArgumentList &TemplateArgs = spec->getTemplateArgs();
-        LV.merge(getLVForTemplateArgumentList(TemplateArgs,
-                                              OnlyTemplate));
+      // The arguments at which the template was instantiated.
+      const TemplateArgumentList &TemplateArgs = spec->getTemplateArgs();
+      LinkageInfo ArgsLV = getLVForTemplateArgumentList(TemplateArgs,
+                                                        OnlyTemplate);
+      if (shouldConsiderTemplateVis(spec)) {
+        LV.merge(TempLV);
+        LV.mergeWithMin(ArgsLV);
+      } else {
+        LV.mergeLinkage(TempLV);
+        LV.mergeLinkage(ArgsLV);
       }
     }
 
@@ -527,12 +535,20 @@ static LinkageInfo getLVForClassMember(const NamedDecl *D, bool OnlyTemplate) {
     // the template parameters and arguments.
     if (FunctionTemplateSpecializationInfo *spec
            = MD->getTemplateSpecializationInfo()) {
-      if (shouldConsiderTemplateLV(MD, spec)) {
-        LV.mergeWithMin(getLVForTemplateArgumentList(*spec->TemplateArguments,
-                                                     OnlyTemplate));
+      const TemplateArgumentList &TemplateArgs = *spec->TemplateArguments;
+      LinkageInfo ArgsLV = getLVForTemplateArgumentList(TemplateArgs,
+                                                        OnlyTemplate);
+      TemplateParameterList *TemplateParams =
+        spec->getTemplate()->getTemplateParameters();
+      LinkageInfo ParamsLV = getLVForTemplateParameterList(TemplateParams);
+      if (shouldConsiderTemplateVis(MD, spec)) {
+        LV.mergeWithMin(ArgsLV);
         if (!OnlyTemplate)
-          LV.merge(getLVForTemplateParameterList(
-                              spec->getTemplate()->getTemplateParameters()));
+          LV.merge(ParamsLV);
+      } else {
+        LV.mergeLinkage(ArgsLV);
+        if (!OnlyTemplate)
+          LV.mergeLinkage(ParamsLV);
       }
     }
 
@@ -542,14 +558,22 @@ static LinkageInfo getLVForClassMember(const NamedDecl *D, bool OnlyTemplate) {
   } else if (const CXXRecordDecl *RD = dyn_cast<CXXRecordDecl>(D)) {
     if (const ClassTemplateSpecializationDecl *spec
         = dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
-      if (shouldConsiderTemplateLV(spec)) {
-        // Merge template argument/parameter information for member
-        // class template specializations.
-        LV.mergeWithMin(getLVForTemplateArgumentList(spec->getTemplateArgs(),
-                                                     OnlyTemplate));
-      if (!OnlyTemplate)
-        LV.merge(getLVForTemplateParameterList(
-                    spec->getSpecializedTemplate()->getTemplateParameters()));
+      // Merge template argument/parameter information for member
+      // class template specializations.
+      const TemplateArgumentList &TemplateArgs = spec->getTemplateArgs();
+      LinkageInfo ArgsLV = getLVForTemplateArgumentList(TemplateArgs,
+                                                        OnlyTemplate);
+      TemplateParameterList *TemplateParams =
+        spec->getSpecializedTemplate()->getTemplateParameters();
+      LinkageInfo ParamsLV = getLVForTemplateParameterList(TemplateParams);
+      if (shouldConsiderTemplateVis(spec)) {
+        LV.mergeWithMin(ArgsLV);
+        if (!OnlyTemplate)
+          LV.merge(ParamsLV);
+      } else {
+        LV.mergeLinkage(ArgsLV);
+        if (!OnlyTemplate)
+          LV.mergeLinkage(ParamsLV);
       }
     }
 
@@ -635,9 +659,19 @@ LinkageInfo NamedDecl::getLinkageAndVisibility() const {
 
 llvm::Optional<Visibility> NamedDecl::getExplicitVisibility() const {
   // Use the most recent declaration of a variable.
-  if (const VarDecl *var = dyn_cast<VarDecl>(this))
-    return getVisibilityOf(var->getMostRecentDecl());
+  if (const VarDecl *Var = dyn_cast<VarDecl>(this)) {
+    if (llvm::Optional<Visibility> V =
+        getVisibilityOf(Var->getMostRecentDecl()))
+      return V;
 
+    if (Var->isStaticDataMember()) {
+      VarDecl *InstantiatedFrom = Var->getInstantiatedFromStaticDataMember();
+      if (InstantiatedFrom)
+        return getVisibilityOf(InstantiatedFrom);
+    }
+
+    return llvm::Optional<Visibility>();
+  }
   // Use the most recent declaration of a function, and also handle
   // function template specializations.
   if (const FunctionDecl *fn = dyn_cast<FunctionDecl>(this)) {
@@ -861,9 +895,7 @@ std::string NamedDecl::getQualifiedNameAsString(const PrintingPolicy &P) const {
         for (unsigned i = 0; i < NumParams; ++i) {
           if (i)
             OS << ", ";
-          std::string Param;
-          FD->getParamDecl(i)->getType().getAsStringInternal(Param, P);
-          OS << Param;
+          OS << FD->getParamDecl(i)->getType().stream(P);
         }
 
         if (FT->isVariadic()) {
@@ -2463,15 +2495,15 @@ unsigned FieldDecl::getFieldIndex() const {
 
   for (RecordDecl::field_iterator I = RD->field_begin(), E = RD->field_end();
        I != E; ++I, ++Index) {
-    (*I)->CachedFieldIndex = Index + 1;
+    I->CachedFieldIndex = Index + 1;
 
     if (IsMsStruct) {
       // Zero-length bitfields following non-bitfield members are ignored.
-      if (getASTContext().ZeroBitfieldFollowsNonBitfield((*I), LastFD)) {
+      if (getASTContext().ZeroBitfieldFollowsNonBitfield(&*I, LastFD)) {
         --Index;
         continue;
       }
-      LastFD = (*I);
+      LastFD = &*I;
     }
   }
 

@@ -1595,6 +1595,9 @@ ParmVarDecl *Sema::SubstParmVarDecl(ParmVarDecl *OldParm,
     NewParm->setUnparsedDefaultArg();
     UnparsedDefaultArgInstantiations[OldParm].push_back(NewParm);
   } else if (Expr *Arg = OldParm->getDefaultArg())
+    // FIXME: if we non-lazily instantiated non-dependent default args for
+    // non-dependent parameter types we could remove a bunch of duplicate
+    // conversion warnings for such arguments.
     NewParm->setUninstantiatedDefaultArg(Arg);
 
   NewParm->setHasInheritedDefaultArg(OldParm->hasInheritedDefaultArg());
@@ -1939,7 +1942,7 @@ Sema::InstantiateClass(SourceLocation PointOfInstantiation,
   CheckCompletedCXXClass(Instantiation);
 
   // Attach any in-class member initializers now the class is complete.
-  {
+  if (!FieldsWithMemberInitializers.empty()) {
     // C++11 [expr.prim.general]p4:
     //   Otherwise, if a member-declarator declares a non-static data member 
     //  (9.2) of a class X, the expression this is a prvalue of type "pointer

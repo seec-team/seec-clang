@@ -323,12 +323,14 @@ static void findPtrToConstParams(llvm::SmallSet<unsigned, 1> &PreserveArgs,
       // allocators/deallocators upon container construction.
       // - NSXXInsertXX, for example NSMapInsertIfAbsent, since they can
       // be deallocated by NSMapRemove.
+      // - Any call that has a callback as one of the arguments.
       if (FName == "pthread_setspecific" ||
           FName == "funopen" ||
           FName.endswith("NoCopy") ||
           (FName.startswith("NS") &&
             (FName.find("Insert") != StringRef::npos)) ||
-          Call.isCFCGAllowingEscape(FName))
+          Call.isCFCGAllowingEscape(FName) ||
+          Call.hasNonZeroCallbackArg())
         return;
     }
 
@@ -344,6 +346,10 @@ static void findPtrToConstParams(llvm::SmallSet<unsigned, 1> &PreserveArgs,
   if (const ObjCMethodDecl *MDecl = dyn_cast<ObjCMethodDecl>(CallDecl)) {
     assert(MDecl->param_size() <= Call.getNumArgs());
     unsigned Idx = 0;
+
+    if (Call.hasNonZeroCallbackArg())
+      return;
+
     for (clang::ObjCMethodDecl::param_const_iterator
          I = MDecl->param_begin(), E = MDecl->param_end(); I != E; ++I, ++Idx) {
       if (isPointerToConst(*I))
@@ -504,7 +510,7 @@ void ExprEngine::VisitCallExpr(const CallExpr *CE, ExplodedNode *Pred,
       else
         ResultTy = CE->getType();
 
-      if (CE->isLValue())
+      if (CE->isGLValue())
         ResultTy = Eng.getContext().getPointerType(ResultTy);
 
       // Conjure a symbol value to use as the result.

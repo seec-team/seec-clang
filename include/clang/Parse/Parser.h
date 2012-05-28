@@ -31,6 +31,9 @@ namespace clang {
   class DeclGroupRef;
   class DiagnosticBuilder;
   class Parser;
+  class ParsingDeclRAIIObject;
+  class ParsingDeclSpec;
+  class ParsingDeclarator;
   class PragmaUnusedHandler;
   class ColonProtectionRAIIObject;
   class InMessageExpressionRAIIObject;
@@ -207,6 +210,7 @@ public:
   const TargetInfo &getTargetInfo() const { return PP.getTargetInfo(); }
   Preprocessor &getPreprocessor() const { return PP; }
   Sema &getActions() const { return Actions; }
+  AttributeFactory &getAttrFactory() { return AttrFactory; }
 
   const Token &getCurToken() const { return Tok; }
   Scope *getCurScope() const { return Actions.getCurScope(); }
@@ -584,11 +588,15 @@ private:
   class TentativeParsingAction {
     Parser &P;
     Token PrevTok;
+    unsigned short PrevParenCount, PrevBracketCount, PrevBraceCount;
     bool isActive;
 
   public:
     explicit TentativeParsingAction(Parser& p) : P(p) {
       PrevTok = P.Tok;
+      PrevParenCount = P.ParenCount;
+      PrevBracketCount = P.BracketCount;
+      PrevBraceCount = P.BraceCount;
       P.PP.EnableBacktrackAtThisPos();
       isActive = true;
     }
@@ -601,6 +609,9 @@ private:
       assert(isActive && "Parsing action was finished!");
       P.PP.Backtrack();
       P.Tok = PrevTok;
+      P.ParenCount = PrevParenCount;
+      P.BracketCount = PrevBracketCount;
+      P.BraceCount = PrevBraceCount;
       isActive = false;
     }
     ~TentativeParsingAction() {
@@ -642,6 +653,17 @@ private:
   /// or, if there's just some closing-delimiter noise (e.g., ')' or ']') prior
   /// to the semicolon, consumes that extra token.
   bool ExpectAndConsumeSemi(unsigned DiagID);
+
+  /// \brief The kind of extra semi diagnostic to emit. 
+  enum ExtraSemiKind {
+    OutsideFunction = 0,
+    InsideStruct = 1,
+    InstanceVariableList = 2,
+    AfterDefinition = 3
+  };
+
+  /// \brief Consume any extra semi-colons until the end of the line.
+  void ConsumeExtraSemi(ExtraSemiKind Kind, const char* DiagMsg = "");
 
   //===--------------------------------------------------------------------===//
   // Scope manipulation
@@ -944,120 +966,7 @@ private:
     return *ClassStack.top();
   }
 
-  /// \brief RAII object used to inform the actions that we're
-  /// currently parsing a declaration.  This is active when parsing a
-  /// variable's initializer, but not when parsing the body of a
-  /// class or function definition.
-  class ParsingDeclRAIIObject {
-    Sema &Actions;
-    Sema::ParsingDeclState State;
-    bool Popped;
-
-  public:
-    ParsingDeclRAIIObject(Parser &P) : Actions(P.Actions) {
-      push();
-    }
-
-    ParsingDeclRAIIObject(Parser &P, ParsingDeclRAIIObject *Other)
-        : Actions(P.Actions) {
-      if (Other) steal(*Other);
-      else push();
-    }
-
-    /// Creates a RAII object which steals the state from a different
-    /// object instead of pushing.
-    ParsingDeclRAIIObject(ParsingDeclRAIIObject &Other)
-        : Actions(Other.Actions) {
-      steal(Other);
-    }
-
-    ~ParsingDeclRAIIObject() {
-      abort();
-    }
-
-    /// Resets the RAII object for a new declaration.
-    void reset() {
-      abort();
-      push();
-    }
-
-    /// Signals that the context was completed without an appropriate
-    /// declaration being parsed.
-    void abort() {
-      pop(0);
-    }
-
-    void complete(Decl *D) {
-      assert(!Popped && "ParsingDeclaration has already been popped!");
-      pop(D);
-    }
-
-  private:
-    void steal(ParsingDeclRAIIObject &Other) {
-      State = Other.State;
-      Popped = Other.Popped;
-      Other.Popped = true;
-    }
-
-    void push() {
-      State = Actions.PushParsingDeclaration();
-      Popped = false;
-    }
-
-    void pop(Decl *D) {
-      if (!Popped) {
-        Actions.PopParsingDeclaration(State, D);
-        Popped = true;
-      }
-    }
-  };
-
-  /// A class for parsing a DeclSpec.
-  class ParsingDeclSpec : public DeclSpec {
-    ParsingDeclRAIIObject ParsingRAII;
-
-  public:
-    ParsingDeclSpec(Parser &P) : DeclSpec(P.AttrFactory), ParsingRAII(P) {}
-    ParsingDeclSpec(Parser &P, ParsingDeclRAIIObject *RAII)
-      : DeclSpec(P.AttrFactory), ParsingRAII(P, RAII) {}
-
-    void complete(Decl *D) {
-      ParsingRAII.complete(D);
-    }
-
-    void abort() {
-      ParsingRAII.abort();
-    }
-  };
-
-  /// A class for parsing a declarator.
-  class ParsingDeclarator : public Declarator {
-    ParsingDeclRAIIObject ParsingRAII;
-
-  public:
-    ParsingDeclarator(Parser &P, const ParsingDeclSpec &DS, TheContext C)
-      : Declarator(DS, C), ParsingRAII(P) {
-    }
-
-    const ParsingDeclSpec &getDeclSpec() const {
-      return static_cast<const ParsingDeclSpec&>(Declarator::getDeclSpec());
-    }
-
-    ParsingDeclSpec &getMutableDeclSpec() const {
-      return const_cast<ParsingDeclSpec&>(getDeclSpec());
-    }
-
-    void clear() {
-      Declarator::clear();
-      ParsingRAII.reset();
-    }
-
-    void complete(Decl *D) {
-      ParsingRAII.complete(D);
-    }
-  };
-
-  /// \brief RAII object used to
+  /// \brief RAII object used to manage the parsing of a class definition.
   class ParsingClassDefinition {
     Parser &P;
     bool Popped;
@@ -1422,12 +1331,10 @@ private:
   ExprResult ParseThrowExpression();
 
   ExceptionSpecificationType tryParseExceptionSpecification(
-                    bool Delayed,
                     SourceRange &SpecificationRange,
                     SmallVectorImpl<ParsedType> &DynamicExceptions,
                     SmallVectorImpl<SourceRange> &DynamicExceptionRanges,
-                    ExprResult &NoexceptExpr,
-                    CachedTokens *&ExceptionSpecTokens);
+                    ExprResult &NoexceptExpr);
 
   // EndLoc is filled with the location of the last token of the specification.
   ExceptionSpecificationType ParseDynamicExceptionSpecification(
@@ -1635,7 +1542,7 @@ private:
   enum DeclSpecContext {
     DSC_normal, // normal context
     DSC_class,  // class context, enables 'friend'
-    DSC_type_specifier, // C++ type-specifier-seq
+    DSC_type_specifier, // C++ type-specifier-seq or C specifier-qualifier-list
     DSC_trailing, // C++11 trailing-type-specifier in a trailing return type
     DSC_top_level // top-level/namespace declaration context
   };
@@ -1846,7 +1753,8 @@ private:
   /// BracedCastResult.
   /// Doesn't consume tokens.
   TPResult
-  isCXXDeclarationSpecifier(TPResult BracedCastResult = TPResult::False());
+  isCXXDeclarationSpecifier(TPResult BracedCastResult = TPResult::False(),
+                            bool *HasMissingTypename = 0);
 
   // "Tentative parsing" functions, used for disambiguation. If a parsing error
   // is encountered they will return TPResult::Error().
@@ -1855,13 +1763,13 @@ private:
   // that more tentative parsing is necessary for disambiguation.
   // They all consume tokens, so backtracking should be used after calling them.
 
-  TPResult TryParseDeclarationSpecifier();
+  TPResult TryParseDeclarationSpecifier(bool *HasMissingTypename = 0);
   TPResult TryParseSimpleDeclaration(bool AllowForRangeDecl);
   TPResult TryParseTypeofSpecifier();
   TPResult TryParseProtocolQualifiers();
   TPResult TryParseInitDeclaratorList();
   TPResult TryParseDeclarator(bool mayBeAbstract, bool mayHaveIdentifier=true);
-  TPResult TryParseParameterDeclarationClause();
+  TPResult TryParseParameterDeclarationClause(bool *InvalidAsDeclaration = 0);
   TPResult TryParseFunctionDeclarator();
   TPResult TryParseBracketDeclarator();
 
@@ -1951,6 +1859,7 @@ private:
                                 SourceLocation *endLoc = 0);
   void ParseMicrosoftDeclSpec(ParsedAttributes &attrs);
   void ParseMicrosoftTypeAttributes(ParsedAttributes &attrs);
+  void ParseMicrosoftInheritanceClassAttributes(ParsedAttributes &attrs);
   void ParseBorlandTypeAttributes(ParsedAttributes &attrs);
   void ParseOpenCLAttributes(ParsedAttributes &attrs);
   void ParseOpenCLQualifiers(DeclSpec &DS);

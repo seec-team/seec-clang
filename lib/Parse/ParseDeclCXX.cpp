@@ -900,6 +900,17 @@ Parser::TypeResult Parser::ParseBaseTypeSpecifier(SourceLocation &BaseLoc,
   return Actions.ActOnTypeName(getCurScope(), DeclaratorInfo);
 }
 
+void Parser::ParseMicrosoftInheritanceClassAttributes(ParsedAttributes &attrs) {
+  while (Tok.is(tok::kw___single_inheritance) ||
+         Tok.is(tok::kw___multiple_inheritance) ||
+         Tok.is(tok::kw___virtual_inheritance)) {
+    IdentifierInfo *AttrName = Tok.getIdentifierInfo();
+    SourceLocation AttrNameLoc = ConsumeToken();
+    attrs.addNew(AttrName, AttrNameLoc, 0, AttrNameLoc, 0,
+                 SourceLocation(), 0, 0, false);
+  }
+}
+
 /// ParseClassSpecifier - Parse a C++ class-specifier [C++ class] or
 /// elaborated-type-specifier [C++ dcl.type.elab]; we can't tell which
 /// until we reach the start of a definition or see a token that
@@ -968,9 +979,13 @@ void Parser::ParseClassSpecifier(tok::TokenKind TagTokKind,
   // As an extension we do not perform access checking on the names used to
   // specify explicit specializations either. This is important to allow
   // specializing traits classes for private types.
-  Sema::SuppressAccessChecksRAII SuppressAccess(Actions,
-    TemplateInfo.Kind == ParsedTemplateInfo::ExplicitInstantiation ||
-    TemplateInfo.Kind == ParsedTemplateInfo::ExplicitSpecialization);
+  //
+  // Note that we don't suppress if this turns out to be an elaborated
+  // type specifier.
+  bool shouldDelayDiagsInTag =
+    (TemplateInfo.Kind == ParsedTemplateInfo::ExplicitInstantiation ||
+     TemplateInfo.Kind == ParsedTemplateInfo::ExplicitSpecialization);
+  SuppressAccessChecks diagsFromTag(*this, shouldDelayDiagsInTag);
 
   ParsedAttributes attrs(AttrFactory);
   // If attributes exist after tag, parse them.
@@ -980,6 +995,12 @@ void Parser::ParseClassSpecifier(tok::TokenKind TagTokKind,
   // If declspecs exist after tag, parse them.
   while (Tok.is(tok::kw___declspec))
     ParseMicrosoftDeclSpec(attrs);
+
+  // Parse inheritance specifiers.
+  if (Tok.is(tok::kw___single_inheritance) ||
+      Tok.is(tok::kw___multiple_inheritance) ||
+      Tok.is(tok::kw___virtual_inheritance))
+      ParseMicrosoftInheritanceClassAttributes(attrs);
 
   // If C++0x attributes exist here, parse them.
   // FIXME: Are we consistent with the ordering of parsing of different
@@ -1103,10 +1124,6 @@ void Parser::ParseClassSpecifier(tok::TokenKind TagTokKind,
     }
   }
 
-  // As soon as we're finished parsing the class's template-id, turn access
-  // checking back on.
-  SuppressAccess.done();
-
   // There are four options here.
   //  - If we are in a trailing return type, this is always just a reference,
   //    and we must not try to parse a definition. For instance,
@@ -1148,6 +1165,14 @@ void Parser::ParseClassSpecifier(tok::TokenKind TagTokKind,
     TUK = DS.isFriendSpecified() ? Sema::TUK_Friend : Sema::TUK_Declaration;
   else
     TUK = Sema::TUK_Reference;
+
+  // If this is an elaborated type specifier, and we delayed
+  // diagnostics before, just merge them into the current pool.
+  if (shouldDelayDiagsInTag) {
+    diagsFromTag.done();
+    if (TUK == Sema::TUK_Reference)
+      diagsFromTag.redelay();
+  }
 
   if (!Name && !TemplateId && (DS.getTypeSpecType() == DeclSpec::TST_error ||
                                TUK != Sema::TUK_Definition)) {
@@ -1535,34 +1560,16 @@ AccessSpecifier Parser::getAccessSpecifierIfPresent() const {
 }
 
 /// \brief If the given declarator has any parts for which parsing has to be
-/// delayed, e.g., default arguments or an exception-specification, create a
-/// late-parsed method declaration record to handle the parsing at the end of
-/// the class definition.
+/// delayed, e.g., default arguments, create a late-parsed method declaration
+/// record to handle the parsing at the end of the class definition.
 void Parser::HandleMemberFunctionDeclDelays(Declarator& DeclaratorInfo,
                                             Decl *ThisDecl) {
   // We just declared a member function. If this member function
-  // has any default arguments or an exception-specification, we'll need to
-  // parse them later.
+  // has any default arguments, we'll need to parse them later.
   LateParsedMethodDeclaration *LateMethod = 0;
   DeclaratorChunk::FunctionTypeInfo &FTI
     = DeclaratorInfo.getFunctionTypeInfo();
-  
-  // If there was a delayed exception-specification, hold onto its tokens.
-  if (FTI.getExceptionSpecType() == EST_Delayed) {
-    // Push this method onto the stack of late-parsed method
-    // declarations.
-    LateMethod = new LateParsedMethodDeclaration(this, ThisDecl);
-    getCurrentClass().LateParsedDeclarations.push_back(LateMethod);
-    LateMethod->TemplateScope = getCurScope()->isTemplateParamScope();
 
-    // Stash the exception-specification tokens in the late-pased mthod.
-    LateMethod->ExceptionSpecTokens = FTI.ExceptionSpecTokens;
-    FTI.ExceptionSpecTokens = 0;
-
-    // Reserve space for the parameters.
-    LateMethod->DefaultArgs.reserve(FTI.NumArgs);
-  }
-  
   for (unsigned ParamIdx = 0; ParamIdx < FTI.NumArgs; ++ParamIdx) {
     if (LateMethod || FTI.ArgInfo[ParamIdx].DefaultArgTokens) {
       if (!LateMethod) {
@@ -1714,12 +1721,16 @@ void Parser::ParseCXXClassMemberDeclaration(AccessSpecifier AS,
   }
   
   // Access declarations.
+  bool MalformedTypeSpec = false;
   if (!TemplateInfo.Kind &&
-      (Tok.is(tok::identifier) || Tok.is(tok::coloncolon)) &&
-      !TryAnnotateCXXScopeToken() &&
-      Tok.is(tok::annot_cxxscope)) {
-    bool isAccessDecl = false;
-    if (NextToken().is(tok::identifier))
+      (Tok.is(tok::identifier) || Tok.is(tok::coloncolon))) {
+    if (TryAnnotateCXXScopeToken())
+      MalformedTypeSpec = true;
+
+    bool isAccessDecl;
+    if (Tok.isNot(tok::annot_cxxscope))
+      isAccessDecl = false;
+    else if (NextToken().is(tok::identifier))
       isAccessDecl = GetLookAheadToken(2).is(tok::semi);
     else
       isAccessDecl = NextToken().is(tok::kw_operator);
@@ -1816,6 +1827,8 @@ void Parser::ParseCXXClassMemberDeclaration(AccessSpecifier AS,
   // Parse the common declaration-specifiers piece.
   ParsingDeclSpec DS(*this, TemplateDiags);
   DS.takeAttributesFrom(attrs);
+  if (MalformedTypeSpec)
+    DS.SetTypeSpecError();
   ParseDeclarationSpecifiers(DS, TemplateInfo, AS, DSC_class,
                              &CommonLateParsedAttrs);
 
@@ -1846,7 +1859,7 @@ void Parser::ParseCXXClassMemberDeclaration(AccessSpecifier AS,
 
     // Parse the first declarator.
     ParseDeclarator(DeclaratorInfo);
-    // Error parsin g the declarator?
+    // Error parsing the declarator?
     if (!DeclaratorInfo.hasName()) {
       // If so, skip until the semi-colon or a }.
       SkipUntil(tok::r_brace, true, true);
@@ -1933,9 +1946,8 @@ void Parser::ParseCXXClassMemberDeclaration(AccessSpecifier AS,
       LateParsedAttrs.clear();
 
       // Consume the ';' - it's optional unless we have a delete or default
-      if (Tok.is(tok::semi)) {
-        ConsumeToken();
-      }
+      if (Tok.is(tok::semi))
+        ConsumeExtraSemi(AfterDefinition);
 
       return;
     }
@@ -2284,10 +2296,8 @@ void Parser::ParseCXXMemberSpecification(SourceLocation RecordLoc,
 
       // Check for extraneous top-level semicolon.
       if (Tok.is(tok::semi)) {
-        Diag(Tok, diag::ext_extra_struct_semi)
-          << DeclSpec::getSpecifierName((DeclSpec::TST)TagType)
-          << FixItHint::CreateRemoval(Tok.getLocation());
-        ConsumeToken();
+        ConsumeExtraSemi(InsideStruct,
+                         DeclSpec::getSpecifierName((DeclSpec::TST)TagType));
         continue;
       }
 
@@ -2358,7 +2368,7 @@ void Parser::ParseCXXMemberSpecification(SourceLocation RecordLoc,
 
   // C++11 [class.mem]p2:
   //   Within the class member-specification, the class is regarded as complete
-  //   within function bodies, default arguments, exception-specifications, and
+  //   within function bodies, default arguments, and
   //   brace-or-equal-initializers for non-static data members (including such
   //   things in nested classes).
   if (TagDecl && NonNestedClass) {
@@ -2559,63 +2569,13 @@ Parser::MemInitResult Parser::ParseMemInitializer(Decl *ConstructorDecl) {
 ///         'noexcept'
 ///         'noexcept' '(' constant-expression ')'
 ExceptionSpecificationType
-Parser::tryParseExceptionSpecification(bool Delayed,
+Parser::tryParseExceptionSpecification(
                     SourceRange &SpecificationRange,
                     SmallVectorImpl<ParsedType> &DynamicExceptions,
                     SmallVectorImpl<SourceRange> &DynamicExceptionRanges,
-                    ExprResult &NoexceptExpr,
-                    CachedTokens *&ExceptionSpecTokens) {
+                    ExprResult &NoexceptExpr) {
   ExceptionSpecificationType Result = EST_None;
-  ExceptionSpecTokens = 0;
-  
-  // Handle delayed parsing of exception-specifications.
-  if (Delayed) {
-    if (Tok.isNot(tok::kw_throw) && Tok.isNot(tok::kw_noexcept))
-      return EST_None;
 
-    // Consume and cache the starting token.
-    bool IsNoexcept = Tok.is(tok::kw_noexcept);
-    Token StartTok = Tok;
-    SpecificationRange = SourceRange(ConsumeToken());
-
-    // Check for a '('.
-    if (!Tok.is(tok::l_paren)) {
-      // If this is a bare 'noexcept', we're done.
-      if (IsNoexcept) {
-        Diag(Tok, diag::warn_cxx98_compat_noexcept_decl);
-        NoexceptExpr = 0;
-        return EST_BasicNoexcept;
-      }
-      
-      Diag(Tok, diag::err_expected_lparen_after) << "throw";
-      return EST_DynamicNone;
-    }
-    
-    // Cache the tokens for the exception-specification.
-    ExceptionSpecTokens = new CachedTokens;
-    ExceptionSpecTokens->push_back(StartTok); // 'throw' or 'noexcept'
-    ExceptionSpecTokens->push_back(Tok); // '('
-    SpecificationRange.setEnd(ConsumeParen()); // '('
-    
-    if (!ConsumeAndStoreUntil(tok::r_paren, *ExceptionSpecTokens,
-                              /*StopAtSemi=*/true,
-                              /*ConsumeFinalToken=*/true)) {
-      NoexceptExpr = 0;
-      delete ExceptionSpecTokens;
-      ExceptionSpecTokens = 0;
-      return IsNoexcept? EST_BasicNoexcept : EST_DynamicNone;
-    }
-    SpecificationRange.setEnd(Tok.getLocation());
-    
-    // Add the 'stop' token.
-    Token End;
-    End.startToken();
-    End.setKind(tok::cxx_exceptspec_end);
-    End.setLocation(Tok.getLocation());
-    ExceptionSpecTokens->push_back(End);
-    return EST_Delayed;
-  }
-  
   // See if there's a dynamic specification.
   if (Tok.is(tok::kw_throw)) {
     Result = ParseDynamicExceptionSpecification(SpecificationRange,
@@ -2938,28 +2898,30 @@ void Parser::ParseCXX11AttributeSpecifier(ParsedAttributes &attrs,
     }
 
     bool AttrParsed = false;
-    // No scoped names are supported; ideally we could put all non-standard
-    // attributes into namespaces.
-    if (!ScopeName) {
-      switch (AttributeList::getKind(AttrName)) {
-      // No arguments
-      case AttributeList::AT_carries_dependency:
-      case AttributeList::AT_noreturn: {
-        if (Tok.is(tok::l_paren)) {
-          Diag(Tok.getLocation(), diag::err_cxx11_attribute_forbids_arguments)
-            << AttrName->getName();
-          break;
-        }
-
-        attrs.addNew(AttrName, AttrLoc, 0, AttrLoc, 0,
-                     SourceLocation(), 0, 0, false, true);
-        AttrParsed = true;
+    switch (AttributeList::getKind(AttrName, ScopeName)) {
+    // No arguments
+    case AttributeList::AT_carries_dependency:
+    // FIXME: implement generic support of attributes with C++11 syntax
+    // see Parse/ParseDecl.cpp: ParseGNUAttributes
+    case AttributeList::AT_clang___fallthrough:
+    case AttributeList::AT_noreturn: {
+      if (Tok.is(tok::l_paren)) {
+        Diag(Tok.getLocation(), diag::err_cxx11_attribute_forbids_arguments)
+          << AttrName->getName();
         break;
       }
 
-      // Silence warnings
-      default: break;
-      }
+      attrs.addNew(AttrName,
+                   SourceRange(ScopeLoc.isValid() ? ScopeLoc : AttrLoc,
+                               AttrLoc),
+                   ScopeName, ScopeLoc, 0,
+                   SourceLocation(), 0, 0, false, true);
+      AttrParsed = true;
+      break;
+    }
+
+    // Silence warnings
+    default: break;
     }
 
     // Skip the entire parameter clause, if any
@@ -3059,10 +3021,8 @@ void Parser::ParseMicrosoftIfExistsClassDeclaration(DeclSpec::TST TagType,
 
     // Check for extraneous top-level semicolon.
     if (Tok.is(tok::semi)) {
-      Diag(Tok, diag::ext_extra_struct_semi)
-        << DeclSpec::getSpecifierName((DeclSpec::TST)TagType)
-        << FixItHint::CreateRemoval(Tok.getLocation());
-      ConsumeToken();
+      ConsumeExtraSemi(InsideStruct,
+                       DeclSpec::getSpecifierName((DeclSpec::TST)TagType));
       continue;
     }
 

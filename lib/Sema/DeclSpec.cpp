@@ -162,7 +162,6 @@ DeclaratorChunk DeclaratorChunk::getFunction(bool hasProto, bool isVariadic,
                                              SourceRange *ExceptionRanges,
                                              unsigned NumExceptions,
                                              Expr *NoexceptExpr,
-                                             CachedTokens *ExceptionSpecTokens,
                                              SourceLocation LocalRangeBegin,
                                              SourceLocation LocalRangeEnd,
                                              Declarator &TheDeclarator,
@@ -226,10 +225,6 @@ DeclaratorChunk DeclaratorChunk::getFunction(bool hasProto, bool isVariadic,
 
   case EST_ComputedNoexcept:
     I.Fun.NoexceptExpr = NoexceptExpr;
-    break;
-      
-  case EST_Delayed:
-    I.Fun.ExceptionSpecTokens = ExceptionSpecTokens;
     break;
   }
   return I;
@@ -938,13 +933,6 @@ bool DeclSpec::isMissingDeclaratorOk() {
   TST tst = getTypeSpecType();
   return isDeclRep(tst) && getRepAsDecl() != 0 &&
     StorageClassSpec != DeclSpec::SCS_typedef;
-}
-
-void UnqualifiedId::clear() {
-  Kind = IK_Identifier;
-  Identifier = 0;
-  StartLocation = SourceLocation();
-  EndLocation = SourceLocation();
 }
 
 void UnqualifiedId::setOperatorFunctionId(SourceLocation OperatorLoc, 

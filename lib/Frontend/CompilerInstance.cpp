@@ -456,7 +456,7 @@ void CompilerInstance::clearOutputFiles(bool EraseFiles) {
         FileMgr->FixupRelativePath(NewOutFile);
         if (llvm::error_code ec = llvm::sys::fs::rename(it->TempFilename,
                                                         NewOutFile.str())) {
-          getDiagnostics().Report(diag::err_fe_unable_to_rename_temp)
+          getDiagnostics().Report(diag::err_unable_to_rename_temp)
             << it->TempFilename << it->Filename << ec.message();
 
           bool existed;
@@ -560,7 +560,8 @@ CompilerInstance::createOutputFile(StringRef OutputPath,
       TempPath += "-%%%%%%%%";
       int fd;
       if (llvm::sys::fs::unique_file(TempPath.str(), fd, TempPath,
-                               /*makeAbsolute=*/false) == llvm::errc::success) {
+                                     /*makeAbsolute=*/false, 0664)
+          == llvm::errc::success) {
         OS.reset(new llvm::raw_fd_ostream(fd, /*shouldClose=*/true));
         OSFile = TempFile = TempPath.str();
       }
@@ -859,13 +860,6 @@ Module *CompilerInstance::loadModule(SourceLocation ImportLoc,
   }
   
   // Determine what file we're searching from.
-  SourceManager &SourceMgr = getSourceManager();
-  SourceLocation ExpandedImportLoc = SourceMgr.getExpansionLoc(ImportLoc);
-  const FileEntry *CurFile
-    = SourceMgr.getFileEntryForID(SourceMgr.getFileID(ExpandedImportLoc));
-  if (!CurFile)
-    CurFile = SourceMgr.getFileEntryForID(SourceMgr.getMainFileID());
-
   StringRef ModuleName = Path[0].first->getName();
   SourceLocation ModuleNameLoc = Path[0].second;
 

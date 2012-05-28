@@ -592,6 +592,11 @@ public:
   /// we prefer to insert allocas.
   llvm::AssertingVH<llvm::Instruction> AllocaInsertPt;
 
+  /// BoundsChecking - Emit run-time bounds checks. Higher values mean
+  /// potentially higher performance penalties.
+  unsigned char BoundsChecking;
+
+  /// CatchUndefined - Emit run-time checks to catch undefined behaviors.
   bool CatchUndefined;
 
   /// In ARC, whether we should autorelease the return value.
@@ -2100,6 +2105,7 @@ public:
   LValue EmitMemberExpr(const MemberExpr *E);
   LValue EmitObjCIsaExpr(const ObjCIsaExpr *E);
   LValue EmitCompoundLiteralLValue(const CompoundLiteralExpr *E);
+  LValue EmitInitListLValue(const InitListExpr *E);
   LValue EmitConditionalOperatorLValue(const AbstractConditionalOperator *E);
   LValue EmitCastLValue(const CastExpr *E);
   LValue EmitNullInitializationLValue(const CXXScalarValueInitExpr *E);
@@ -2412,10 +2418,9 @@ public:
   void EmitCXXGlobalVarDeclInit(const VarDecl &D, llvm::Constant *DeclPtr,
                                 bool PerformInit);
 
-  /// EmitCXXGlobalDtorRegistration - Emits a call to register the global ptr
-  /// with the C++ runtime so that its destructor will be called at exit.
-  void EmitCXXGlobalDtorRegistration(llvm::Constant *DtorFn,
-                                     llvm::Constant *DeclPtr);
+  /// Call atexit() with a function that passes the given argument to
+  /// the given function.
+  void registerGlobalDtorWithAtExit(llvm::Constant *fn, llvm::Constant *addr);
 
   /// Emit code in this function to perform a guarded variable
   /// initialization.  Guarded initializations are used when it's not

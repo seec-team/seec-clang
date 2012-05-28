@@ -755,6 +755,9 @@ void Clang::AddARMTargetArgs(const ArgList &Args,
     if (A->getOption().matches(options::OPT_mno_global_merge))
       CmdArgs.push_back("-mno-global-merge");
   }
+
+  if (Args.hasArg(options::OPT_mno_implicit_float))
+    CmdArgs.push_back("-no-implicit-float");
 }
 
 // Get default architecture.
@@ -958,7 +961,7 @@ void Clang::AddX86TargetArgs(const ArgList &Args,
       // FIXME: We should also incorporate the detected target features for use
       // with -native.
       std::string CPU = llvm::sys::getHostCPUName();
-      if (!CPU.empty())
+      if (!CPU.empty() && CPU != "generic")
         CPUName = Args.MakeArgString(CPU);
     } else
       CPUName = A->getValue(Args);
@@ -1088,7 +1091,7 @@ void Clang::AddHexagonTargetArgs(const ArgList &Args,
   CmdArgs.push_back("-fno-signed-char");
   CmdArgs.push_back("-nobuiltininc");
 
-  if (Args.hasArg(options::OPT_mqdsp6_compat))  
+  if (Args.hasArg(options::OPT_mqdsp6_compat))
     CmdArgs.push_back("-mqdsp6-compat");
 
   if (Arg *A = Args.getLastArg(options::OPT_G,
@@ -1100,6 +1103,12 @@ void Clang::AddHexagonTargetArgs(const ArgList &Args,
     A->claim();
   }
 
+  if (!Args.hasArg(options::OPT_fno_short_enums))
+    CmdArgs.push_back("-fshort-enums");
+  if (Args.getLastArg(options::OPT_mieee_rnd_near)) {
+    CmdArgs.push_back ("-mllvm");
+    CmdArgs.push_back ("-enable-hexagon-ieee-rnd-near");
+  }
   CmdArgs.push_back ("-mllvm");
   CmdArgs.push_back ("-machine-sink-split=0");
 }
@@ -1295,6 +1304,27 @@ static void addAsanRTLinux(const ToolChain &TC, const ArgList &Args,
       CmdArgs.push_back("-ldl");
       CmdArgs.push_back("-export-dynamic");
     }
+  }
+}
+
+/// If ThreadSanitizer is enabled, add appropriate linker flags (Linux).
+/// This needs to be called before we add the C run-time (malloc, etc).
+static void addTsanRTLinux(const ToolChain &TC, const ArgList &Args,
+                           ArgStringList &CmdArgs) {
+  if (!Args.hasFlag(options::OPT_fthread_sanitizer,
+                    options::OPT_fno_thread_sanitizer, false))
+    return;
+  if (!Args.hasArg(options::OPT_shared)) {
+    // LibTsan is "libclang_rt.tsan-<ArchName>.a" in the Linux library
+    // resource directory.
+    SmallString<128> LibTsan(TC.getDriver().ResourceDir);
+    llvm::sys::path::append(LibTsan, "lib", "linux",
+                            (Twine("libclang_rt.tsan-") +
+                             TC.getArchName() + ".a"));
+    CmdArgs.push_back(Args.MakeArgString(LibTsan));
+    CmdArgs.push_back("-lpthread");
+    CmdArgs.push_back("-ldl");
+    CmdArgs.push_back("-export-dynamic");
   }
 }
 
@@ -1617,9 +1647,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
         A->getOption().getID() != options::OPT_fhonor_nans)
       CmdArgs.push_back("-menable-no-nans");
 
-  // -fno-math-errno is default on Darwin. Other platforms, -fmath-errno is the
-  // default.
-  bool MathErrno = !getToolChain().getTriple().isOSDarwin();
+  // -fmath-errno is the default on some platforms, e.g. BSD-derived OSes.
+  bool MathErrno = getToolChain().IsMathErrnoDefault();
   if (Arg *A = Args.getLastArg(options::OPT_ffast_math,
                                options::OPT_fmath_errno,
                                options::OPT_fno_math_errno))
@@ -1817,6 +1846,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     if (!A->getOption().matches(options::OPT_g0)) {
       CmdArgs.push_back("-g");
     }
+  if (Args.hasArg(options::OPT_gline_tables_only))
+    CmdArgs.push_back("-gline-tables-only");
 
   Args.AddAllArgs(CmdArgs, options::OPT_ffunction_sections);
   Args.AddAllArgs(CmdArgs, options::OPT_fdata_sections);
@@ -2017,11 +2048,20 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   if (Arg *A = Args.getLastArg(options::OPT_Wlarge_by_value_copy_EQ,
                                options::OPT_Wlarge_by_value_copy_def)) {
-    CmdArgs.push_back("-Wlarge-by-value-copy");
-    if (A->getNumValues())
-      CmdArgs.push_back(A->getValue(Args));
-    else
-      CmdArgs.push_back("64"); // default value for -Wlarge-by-value-copy.
+    if (A->getNumValues()) {
+      StringRef bytes = A->getValue(Args);
+      CmdArgs.push_back(Args.MakeArgString("-Wlarge-by-value-copy=" + bytes));
+    } else
+      CmdArgs.push_back("-Wlarge-by-value-copy=64"); // default value
+  }
+
+  if (Arg *A = Args.getLastArg(options::OPT_fbounds_checking,
+                               options::OPT_fbounds_checking_EQ)) {
+    if (A->getNumValues()) {
+      StringRef val = A->getValue(Args);
+      CmdArgs.push_back(Args.MakeArgString("-fbounds-checking=" + val));
+    } else
+      CmdArgs.push_back("-fbounds-checking=1");
   }
 
   if (Args.hasArg(options::OPT__relocatable_pch))
@@ -2500,12 +2540,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // Honor -fpack-struct= and -fpack-struct, if given. Note that
   // -fno-pack-struct doesn't apply to -fpack-struct=.
   if (Arg *A = Args.getLastArg(options::OPT_fpack_struct_EQ)) {
-    CmdArgs.push_back("-fpack-struct");
-    CmdArgs.push_back(A->getValue(Args));
+    std::string PackStructStr = "-fpack-struct=";
+    PackStructStr += A->getValue(Args);
+    CmdArgs.push_back(Args.MakeArgString(PackStructStr));
   } else if (Args.hasFlag(options::OPT_fpack_struct,
                           options::OPT_fno_pack_struct, false)) {
-    CmdArgs.push_back("-fpack-struct");
-    CmdArgs.push_back("1");
+    CmdArgs.push_back("-fpack-struct=1");
   }
 
   if (Args.hasArg(options::OPT_mkernel) ||
@@ -4034,9 +4074,6 @@ void darwin::Link::AddLinkArgs(Compilation &C,
   } else if (const Arg *A = Args.getLastArg(options::OPT_isysroot)) {
     CmdArgs.push_back("-syslibroot");
     CmdArgs.push_back(A->getValue(Args));
-  } else if (getDarwinToolChain().isTargetIPhoneOS()) {
-    CmdArgs.push_back("-syslibroot");
-    CmdArgs.push_back("/Developer/SDKs/Extra");
   }
 
   Args.AddLastArg(CmdArgs, options::OPT_twolevel__namespace);
@@ -4095,7 +4132,6 @@ void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddAllArgs(CmdArgs, options::OPT_t);
   Args.AddAllArgs(CmdArgs, options::OPT_Z_Flag);
   Args.AddAllArgs(CmdArgs, options::OPT_u_Group);
-  Args.AddAllArgs(CmdArgs, options::OPT_A);
   Args.AddLastArg(CmdArgs, options::OPT_e);
   Args.AddAllArgs(CmdArgs, options::OPT_m_Separate);
   Args.AddAllArgs(CmdArgs, options::OPT_r);
@@ -4109,8 +4145,7 @@ void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
   CmdArgs.push_back("-o");
   CmdArgs.push_back(Output.getFilename());
 
-  if (!Args.hasArg(options::OPT_A) &&
-      !Args.hasArg(options::OPT_nostdlib) &&
+  if (!Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nostartfiles)) {
     // Derived from startfile spec.
     if (Args.hasArg(options::OPT_dynamiclib)) {
@@ -4211,9 +4246,11 @@ void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
     // This is more complicated in gcc...
     CmdArgs.push_back("-lgomp");
 
-  getDarwinToolChain().AddLinkSearchPathArgs(Args, CmdArgs);
-
-  if (isObjCRuntimeLinked(Args)) {
+  AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
+  
+  if (isObjCRuntimeLinked(Args) &&
+      !Args.hasArg(options::OPT_nostdlib) &&
+      !Args.hasArg(options::OPT_nodefaultlibs)) {
     // Avoid linking compatibility stubs on i386 mac.
     if (!getDarwinToolChain().isTargetMacOS() ||
         getDarwinToolChain().getArchName() != "i386") {
@@ -4232,8 +4269,6 @@ void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
     // Link libobj.
     CmdArgs.push_back("-lobjc");
   }
-
-  AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
 
   if (LinkingOutput) {
     CmdArgs.push_back("-arch_multiple");
@@ -4255,8 +4290,7 @@ void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
     getDarwinToolChain().AddLinkRuntimeLibArgs(Args, CmdArgs);
   }
 
-  if (!Args.hasArg(options::OPT_A) &&
-      !Args.hasArg(options::OPT_nostdlib) &&
+  if (!Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nostartfiles)) {
     // endfile_spec is empty.
   }
@@ -5302,7 +5336,9 @@ void linuxtools::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   AddLinkerInputs(ToolChain, Inputs, Args, CmdArgs);
 
-  if (D.CCCIsCXX && !Args.hasArg(options::OPT_nostdlib)) {
+  if (D.CCCIsCXX &&
+      !Args.hasArg(options::OPT_nostdlib) &&
+      !Args.hasArg(options::OPT_nodefaultlibs)) {
     bool OnlyLibstdcxxStatic = Args.hasArg(options::OPT_static_libstdcxx) &&
       !Args.hasArg(options::OPT_static);
     if (OnlyLibstdcxxStatic)
@@ -5315,24 +5351,26 @@ void linuxtools::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Call this before we add the C run-time.
   addAsanRTLinux(getToolChain(), Args, CmdArgs);
+  addTsanRTLinux(getToolChain(), Args, CmdArgs);
 
   if (!Args.hasArg(options::OPT_nostdlib)) {
-    if (Args.hasArg(options::OPT_static))
-      CmdArgs.push_back("--start-group");
+    if (!Args.hasArg(options::OPT_nodefaultlibs)) {
+      if (Args.hasArg(options::OPT_static))
+        CmdArgs.push_back("--start-group");
 
-    AddLibgcc(ToolChain.getTriple(), D, CmdArgs, Args);
-
-    if (Args.hasArg(options::OPT_pthread) ||
-        Args.hasArg(options::OPT_pthreads))
-      CmdArgs.push_back("-lpthread");
-
-    CmdArgs.push_back("-lc");
-
-    if (Args.hasArg(options::OPT_static))
-      CmdArgs.push_back("--end-group");
-    else
       AddLibgcc(ToolChain.getTriple(), D, CmdArgs, Args);
 
+      if (Args.hasArg(options::OPT_pthread) ||
+          Args.hasArg(options::OPT_pthreads))
+        CmdArgs.push_back("-lpthread");
+
+      CmdArgs.push_back("-lc");
+
+      if (Args.hasArg(options::OPT_static))
+        CmdArgs.push_back("--end-group");
+      else
+        AddLibgcc(ToolChain.getTriple(), D, CmdArgs, Args);
+    }
 
     if (!Args.hasArg(options::OPT_nostartfiles)) {
       const char *crtend;

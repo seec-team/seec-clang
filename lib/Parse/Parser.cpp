@@ -185,7 +185,7 @@ bool Parser::ExpectAndConsume(tok::TokenKind ExpectedTok, unsigned DiagID,
 
 bool Parser::ExpectAndConsumeSemi(unsigned DiagID) {
   if (Tok.is(tok::semi) || Tok.is(tok::code_completion)) {
-    ConsumeAnyToken();
+    ConsumeToken();
     return false;
   }
   
@@ -200,6 +200,33 @@ bool Parser::ExpectAndConsumeSemi(unsigned DiagID) {
   }
   
   return ExpectAndConsume(tok::semi, DiagID);
+}
+
+void Parser::ConsumeExtraSemi(ExtraSemiKind Kind, const char* DiagMsg) {
+  if (!Tok.is(tok::semi)) return;
+
+  // AfterDefinition should only warn when placed on the same line as the
+  // definition.  Otherwise, defer to another semi warning.
+  if (Kind == AfterDefinition && Tok.isAtStartOfLine()) return;
+
+  SourceLocation StartLoc = Tok.getLocation();
+  SourceLocation EndLoc = Tok.getLocation();
+  ConsumeToken();
+
+  while ((Tok.is(tok::semi) && !Tok.isAtStartOfLine())) {
+    EndLoc = Tok.getLocation();
+    ConsumeToken();
+  }
+
+  if (Kind == OutsideFunction && getLangOpts().CPlusPlus0x) {
+    Diag(StartLoc, diag::warn_cxx98_compat_top_level_semi)
+        << FixItHint::CreateRemoval(SourceRange(StartLoc, EndLoc));
+    return;
+  }
+
+  Diag(StartLoc, diag::ext_extra_semi)
+      << Kind << DiagMsg << FixItHint::CreateRemoval(SourceRange(StartLoc,
+                                                                 EndLoc));
 }
 
 //===----------------------------------------------------------------------===//
@@ -582,11 +609,7 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
     HandlePragmaPack();
     return DeclGroupPtrTy();
   case tok::semi:
-    Diag(Tok, getLangOpts().CPlusPlus0x ?
-         diag::warn_cxx98_compat_top_level_semi : diag::ext_top_level_semi)
-      << FixItHint::CreateRemoval(Tok.getLocation());
-
-    ConsumeToken();
+    ConsumeExtraSemi(OutsideFunction);
     // TODO: Invoke action for top-level semicolon.
     return DeclGroupPtrTy();
   case tok::r_brace:
@@ -1248,7 +1271,8 @@ TemplateIdAnnotation *Parser::takeTemplateIdAnnotation(const Token &tok) {
 bool Parser::TryAnnotateTypeOrScopeToken(bool EnteringContext, bool NeedType) {
   assert((Tok.is(tok::identifier) || Tok.is(tok::coloncolon)
           || Tok.is(tok::kw_typename) || Tok.is(tok::annot_cxxscope)
-          || Tok.is(tok::kw_decltype)) && "Cannot be a type or scope token!");
+          || Tok.is(tok::kw_decltype) || Tok.is(tok::annot_template_id))
+          && "Cannot be a type or scope token!");
 
   if (Tok.is(tok::kw_typename)) {
     // Parse a C++ typename-specifier, e.g., "typename T::type".
@@ -1264,10 +1288,21 @@ bool Parser::TryAnnotateTypeOrScopeToken(bool EnteringContext, bool NeedType) {
                                        0, /*IsTypename*/true))
       return true;
     if (!SS.isSet()) {
-      if (getLangOpts().MicrosoftExt)
-        Diag(Tok.getLocation(), diag::warn_expected_qualified_after_typename);
-      else
-        Diag(Tok.getLocation(), diag::err_expected_qualified_after_typename);
+      if (Tok.is(tok::identifier) || Tok.is(tok::annot_template_id)) {
+        // Attempt to recover by skipping the invalid 'typename'
+        if (!TryAnnotateTypeOrScopeToken(EnteringContext, NeedType) &&
+            Tok.isAnnotation()) {
+          unsigned DiagID = diag::err_expected_qualified_after_typename;
+          // MS compatibility: MSVC permits using known types with typename.
+          // e.g. "typedef typename T* pointer_type"
+          if (getLangOpts().MicrosoftExt)
+            DiagID = diag::warn_expected_qualified_after_typename;
+          Diag(Tok.getLocation(), DiagID);
+          return false;
+        }
+      }
+
+      Diag(Tok.getLocation(), diag::err_expected_qualified_after_typename);
       return true;
     }
 
@@ -1420,8 +1455,7 @@ bool Parser::TryAnnotateTypeOrScopeToken(bool EnteringContext, bool NeedType) {
 
 /// TryAnnotateScopeToken - Like TryAnnotateTypeOrScopeToken but only
 /// annotates C++ scope specifiers and template-ids.  This returns
-/// true if the token was annotated or there was an error that could not be
-/// recovered from.
+/// true if there was an error that could not be recovered from.
 ///
 /// Note that this routine emits an error if you call it with ::new or ::delete
 /// as the current tokens, so only call it in contexts where these are invalid.

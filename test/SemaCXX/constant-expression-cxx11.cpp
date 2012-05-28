@@ -1248,3 +1248,21 @@ namespace Vector {
   }
   constexpr auto v2 = g(4);
 }
+
+// PR12626, redux
+namespace InvalidClasses {
+  void test0() {
+    struct X; // expected-note {{forward declaration}}
+    struct Y { bool b; X x; }; // expected-error {{field has incomplete type}}
+    Y y;
+    auto& b = y.b;
+  }
+}
+
+// Indirectly test that an implicit lvalue to xvalue conversion performed for
+// an NRVO move operation isn't implemented as CK_LValueToRValue.
+namespace PR12826 {
+  struct Foo {};
+  constexpr Foo id(Foo x) { return x; }
+  constexpr Foo res(id(Foo()));
+}

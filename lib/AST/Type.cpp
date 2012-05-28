@@ -288,6 +288,28 @@ QualType QualType::IgnoreParens(QualType T) {
   return T;
 }
 
+/// \brief This will check for a TypedefType by removing any existing sugar
+/// until it reaches a TypedefType or a non-sugared type.
+template <> const TypedefType *Type::getAs() const {
+  const Type *Cur = this;
+
+  while (true) {
+    if (const TypedefType *TDT = dyn_cast<TypedefType>(Cur))
+      return TDT;
+    switch (Cur->getTypeClass()) {
+#define ABSTRACT_TYPE(Class, Parent)
+#define TYPE(Class, Parent) \
+    case Class: { \
+      const Class##Type *Ty = cast<Class##Type>(Cur); \
+      if (!Ty->isSugared()) return 0; \
+      Cur = Ty->desugar().getTypePtr(); \
+      break; \
+    }
+#include "clang/AST/TypeNodes.def"
+    }
+  }
+}
+
 /// getUnqualifiedDesugaredType - Pull any qualifiers and syntactic
 /// sugar off the given type.  This should produce an object of the
 /// same dynamic type as the canonical type.
@@ -1425,7 +1447,7 @@ const char *Type::getTypeClassName() const {
   llvm_unreachable("Invalid type class.");
 }
 
-const char *BuiltinType::getName(const PrintingPolicy &Policy) const {
+StringRef BuiltinType::getName(const PrintingPolicy &Policy) const {
   switch (getKind()) {
   case Void:              return "void";
   case Bool:              return Policy.Bool ? "bool" : "_Bool";

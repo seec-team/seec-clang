@@ -21,15 +21,16 @@ def warn_file_asm_volatile : Warning<
 let CategoryName = "Parse Issue" in {
 
 def ext_empty_source_file : Extension<"ISO C forbids an empty source file">;
-def ext_top_level_semi : Extension<
-  "extra ';' outside of a function">;
 def warn_cxx98_compat_top_level_semi : Warning<
   "extra ';' outside of a function is incompatible with C++98">,
   InGroup<CXX98CompatPedantic>, DefaultIgnore;
-def ext_extra_struct_semi : Extension<
-  "extra ';' inside a %0">;
-def ext_extra_ivar_semi : Extension<
-  "extra ';' inside instance variable list">;
+def ext_extra_semi : Extension<
+  "extra ';' %select{"
+  "outside of a function|"
+  "inside a %1|"
+  "inside instance variable list|"
+  "after function definition}0">,
+  InGroup<DiagGroup<"extra-semi">>;
 
 def ext_duplicate_declspec : Extension<"duplicate '%0' declaration specifier">;
 def ext_plain_complex : ExtWarn<
@@ -377,6 +378,8 @@ def err_synthesized_property_name : Error<
 def warn_semicolon_before_method_body : Warning<
   "semicolon before method body is ignored">,
   InGroup<DiagGroup<"semicolon-before-method-body">>, DefaultIgnore;
+def note_extra_comma_message_arg : Note<
+  "comma separating objective-c messaging arguments">;
 
 def err_expected_field_designator : Error<
   "expected a field designator, such as '.field = 4'">;
@@ -412,8 +415,6 @@ def ext_ellipsis_exception_spec : Extension<
   "exception specification of '...' is a Microsoft extension">;
 def err_dynamic_and_noexcept_specification : Error<
   "cannot have both throw() and noexcept() clause on the same function">;
-def err_except_spec_unparsed : Error<
-  "unexpected end of exception specification">;
 def warn_cxx98_compat_noexcept_decl : Warning<
   "noexcept specifications are incompatible with C++98">,
   InGroup<CXX98Compat>, DefaultIgnore;
@@ -497,7 +498,7 @@ def err_two_right_angle_brackets_need_space : Error<
   "a space is required between consecutive right angle brackets (use '> >')">;
 def warn_cxx0x_right_shift_in_template_arg : Warning<
   "use of right-shift operator ('>>') in template argument will require "
-  "parentheses in C++11">;
+  "parentheses in C++11">, InGroup<CXX11Compat>;
 def warn_cxx98_compat_two_right_angle_brackets : Warning<
   "consecutive right angle brackets are incompatible with C++98 (use '> >')">,
   InGroup<CXX98Compat>, DefaultIgnore;
@@ -652,9 +653,11 @@ def err_availability_unknown_change : Error<
   "%0 is not an availability stage; use 'introduced', 'deprecated', or "
   "'obsoleted'">;
 def err_availability_redundant : Error<
-  "redundant %0 availability change; only the last specified change will "        "be used">;
+  "redundant %0 availability change; only the last specified change will "
+  "be used">;
 def warn_availability_and_unavailable : Warning<
-  "'unavailable' availability overrides all other availability information">;
+  "'unavailable' availability overrides all other availability information">,
+  InGroup<Availability>;
 
 // Language specific pragmas
 // - Generic warnings

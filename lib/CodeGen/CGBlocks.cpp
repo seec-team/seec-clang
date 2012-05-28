@@ -469,9 +469,10 @@ static void computeBlockInfo(CodeGenModule &CGM, CodeGenFunction *CGF,
     elementTypes.push_back(llvm::ArrayType::get(CGM.Int8Ty,
                                                 padding.getQuantity()));
     blockSize = newBlockSize;
-    endAlign = maxFieldAlign;
+    endAlign = getLowBit(blockSize); // might be > maxFieldAlign
   }
 
+  assert(endAlign >= maxFieldAlign);
   assert(endAlign == getLowBit(blockSize));
 
   // Slam everything else on now.  This works because they have
@@ -697,7 +698,7 @@ llvm::Value *CodeGenFunction::EmitBlockLiteral(const CGBlockInfo &blockInfo) {
     // Compute the address of the thing we're going to move into the
     // block literal.
     llvm::Value *src;
-    if (ci->isNested()) {
+    if (BlockInfo && ci->isNested()) {
       // We need to use the capture from the enclosing block.
       const CGBlockInfo::Capture &enclosingCapture =
         BlockInfo->getCapture(variable);
@@ -1133,15 +1134,17 @@ CodeGenFunction::GenerateBlockFunction(GlobalDecl GD,
       const VarDecl *variable = ci->getVariable();
       DI->EmitLocation(Builder, variable->getLocation());
 
-      const CGBlockInfo::Capture &capture = blockInfo.getCapture(variable);
-      if (capture.isConstant()) {
-        DI->EmitDeclareOfAutoVariable(variable, LocalDeclMap[variable],
-                                      Builder);
-        continue;
-      }
+      if (CGM.getCodeGenOpts().DebugInfo >= CodeGenOptions::LimitedDebugInfo) {
+        const CGBlockInfo::Capture &capture = blockInfo.getCapture(variable);
+        if (capture.isConstant()) {
+          DI->EmitDeclareOfAutoVariable(variable, LocalDeclMap[variable],
+                                        Builder);
+          continue;
+        }
 
-      DI->EmitDeclareOfBlockDeclRefVariable(variable, BlockPointer,
-                                            Builder, blockInfo);
+        DI->EmitDeclareOfBlockDeclRefVariable(variable, BlockPointer,
+                                              Builder, blockInfo);
+      }
     }
   }
 
