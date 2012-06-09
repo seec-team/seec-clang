@@ -137,3 +137,41 @@ struct haslist1 {
 haslist1::haslist1()
 : il{1, 2, 3} // expected-warning{{at the end of the constructor}}
 {}
+
+namespace PR12119 {
+  // Deduction with nested initializer lists.
+  template<typename T> void f(std::initializer_list<T>);
+  template<typename T> void g(std::initializer_list<std::initializer_list<T>>);
+
+  void foo() {
+    f({0, {1}});
+    g({{0, 1}, {2, 3}});
+    std::initializer_list<int> il = {1, 2};
+    g({il, {2, 3}});
+  }
+}
+
+namespace Decay {
+  template<typename T>
+  void f(std::initializer_list<T>) {
+    T x = 1; // expected-error{{cannot initialize a variable of type 'const char *' with an rvalue of type 'int'}}
+  }
+
+  void g() {
+    f({"A", "BB", "CCC"}); // expected-note{{in instantiation of function template specialization 'Decay::f<const char *>' requested here}}
+
+    auto x = { "A", "BB", "CCC" };
+    std::initializer_list<const char *> *il = &x;
+
+    for( auto s : {"A", "BB", "CCC", "DDD"}) { }
+  }
+}
+
+namespace PR12436 {
+  struct X {
+    template<typename T>
+    X(std::initializer_list<int>, T);
+  };
+  
+  X x({}, 17);
+}

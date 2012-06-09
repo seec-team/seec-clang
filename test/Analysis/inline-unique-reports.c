@@ -34,12 +34,12 @@ void test_bug_2() {
 // CHECK:         <key>start</key>
 // CHECK:          <array>
 // CHECK:           <dict>
-// CHECK:            <key>line</key><integer>14</integer>
+// CHECK:            <key>line</key><integer>9</integer>
 // CHECK:            <key>col</key><integer>3</integer>
 // CHECK:            <key>file</key><integer>0</integer>
 // CHECK:           </dict>
 // CHECK:           <dict>
-// CHECK:            <key>line</key><integer>14</integer>
+// CHECK:            <key>line</key><integer>9</integer>
 // CHECK:            <key>col</key><integer>3</integer>
 // CHECK:            <key>file</key><integer>0</integer>
 // CHECK:           </dict>
@@ -47,12 +47,12 @@ void test_bug_2() {
 // CHECK:         <key>end</key>
 // CHECK:          <array>
 // CHECK:           <dict>
-// CHECK:            <key>line</key><integer>15</integer>
+// CHECK:            <key>line</key><integer>10</integer>
 // CHECK:            <key>col</key><integer>3</integer>
 // CHECK:            <key>file</key><integer>0</integer>
 // CHECK:           </dict>
 // CHECK:           <dict>
-// CHECK:            <key>line</key><integer>15</integer>
+// CHECK:            <key>line</key><integer>10</integer>
 // CHECK:            <key>col</key><integer>3</integer>
 // CHECK:            <key>file</key><integer>0</integer>
 // CHECK:           </dict>
@@ -64,7 +64,7 @@ void test_bug_2() {
 // CHECK:      <key>kind</key><string>event</string>
 // CHECK:      <key>location</key>
 // CHECK:      <dict>
-// CHECK:       <key>line</key><integer>15</integer>
+// CHECK:       <key>line</key><integer>10</integer>
 // CHECK:       <key>col</key><integer>3</integer>
 // CHECK:       <key>file</key><integer>0</integer>
 // CHECK:      </dict>
@@ -72,17 +72,18 @@ void test_bug_2() {
 // CHECK:      <array>
 // CHECK:        <array>
 // CHECK:         <dict>
-// CHECK:          <key>line</key><integer>15</integer>
+// CHECK:          <key>line</key><integer>10</integer>
 // CHECK:          <key>col</key><integer>3</integer>
 // CHECK:          <key>file</key><integer>0</integer>
 // CHECK:         </dict>
 // CHECK:         <dict>
-// CHECK:          <key>line</key><integer>15</integer>
+// CHECK:          <key>line</key><integer>10</integer>
 // CHECK:          <key>col</key><integer>8</integer>
 // CHECK:          <key>file</key><integer>0</integer>
 // CHECK:         </dict>
 // CHECK:        </array>
 // CHECK:      </array>
+// CHECK:      <key>depth</key><integer>0</integer>
 // CHECK:      <key>extended_message</key>
 // CHECK:      <string>Calling &apos;bug&apos;</string>
 // CHECK:      <key>message</key>
@@ -96,10 +97,11 @@ void test_bug_2() {
 // CHECK:       <key>col</key><integer>1</integer>
 // CHECK:       <key>file</key><integer>0</integer>
 // CHECK:      </dict>
+// CHECK:      <key>depth</key><integer>1</integer>
 // CHECK:      <key>extended_message</key>
-// CHECK:      <string>Entered call
+// CHECK:      <string>Entered call from &apos;test_bug_1&apos;</string>
 // CHECK:      <key>message</key>
-// CHECK: <string>Entered call
+// CHECK: <string>Entered call from &apos;test_bug_1&apos;</string>
 // CHECK:     </dict>
 // CHECK:     <dict>
 // CHECK:      <key>kind</key><string>control</string>
@@ -128,7 +130,7 @@ void test_bug_2() {
 // CHECK:           </dict>
 // CHECK:           <dict>
 // CHECK:            <key>line</key><integer>5</integer>
-// CHECK:            <key>col</key><integer>4</integer>
+// CHECK:            <key>col</key><integer>3</integer>
 // CHECK:            <key>file</key><integer>0</integer>
 // CHECK:           </dict>
 // CHECK:          </array>
@@ -158,6 +160,7 @@ void test_bug_2() {
 // CHECK:         </dict>
 // CHECK:        </array>
 // CHECK:      </array>
+// CHECK:      <key>depth</key><integer>1</integer>
 // CHECK:      <key>extended_message</key>
 // CHECK:      <string>Dereference of null pointer (loaded from variable &apos;p&apos;)</string>
 // CHECK:      <key>message</key>
@@ -167,6 +170,8 @@ void test_bug_2() {
 // CHECK:    <key>description</key><string>Dereference of null pointer (loaded from variable &apos;p&apos;)</string>
 // CHECK:    <key>category</key><string>Logic error</string>
 // CHECK:    <key>type</key><string>Dereference of null pointer</string>
+// CHECK:   <key>issue_context_kind</key><string>function</string>
+// CHECK:   <key>issue_context</key><string>bug</string>
 // CHECK:   <key>location</key>
 // CHECK:   <dict>
 // CHECK:    <key>line</key><integer>5</integer>
@@ -177,4 +182,3 @@ void test_bug_2() {
 // CHECK:  </array>
 // CHECK: </dict>
 // CHECK: </plist>
-

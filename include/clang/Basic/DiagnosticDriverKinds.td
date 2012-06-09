@@ -33,8 +33,6 @@ def err_drv_use_of_Z_option : Error<
   "unsupported use of internal gcc -Z option '%0'">;
 def err_drv_output_argument_with_multiple_files : Error<
   "cannot specify -o when generating multiple output files">;
-def err_drv_unable_to_make_temp : Error<
-  "unable to make temporary file: %0">;
 def err_drv_unable_to_remove_file : Error<
   "unable to remove file: %0">;
 def err_drv_command_failure : Error<
@@ -42,7 +40,7 @@ def err_drv_command_failure : Error<
 def err_drv_invalid_darwin_version : Error<
   "invalid Darwin version number: %0">;
 def err_drv_missing_argument : Error<
-  "argument to '%0' is missing (expected %1 %plural{1:value|:values}1)">;
+  "argument to '%0' is missing (expected %1 value%s1)">;
 def err_drv_invalid_Xarch_argument_with_args : Error<
   "invalid Xarch argument: '%0', options requiring arguments are unsupported">;
 def err_drv_invalid_Xarch_argument_isdriver : Error<
@@ -71,6 +69,8 @@ def err_drv_invalid_mfloat_abi : Error<
   "invalid float ABI '%0'">;
 def err_drv_invalid_libcxx_deployment : Error<
   "invalid deployment target for -stdlib=libc++ (requires %0 or later)">;
+def err_drv_invalid_feature : Error<
+  "invalid feature '%0' for CPU '%1'">;
 
 def err_drv_I_dash_not_supported : Error<
   "'%0' not supported, please use -iquote instead">;
@@ -108,7 +108,7 @@ def warn_drv_unused_argument : Warning<
   "argument unused during compilation: '%0'">,
   InGroup<DiagGroup<"unused-command-line-argument">>;
 def warn_drv_empty_joined_argument : Warning<
-  "joined argument expects addition arg: '%0'">,
+  "joined argument expects additional value: '%0'">,
   InGroup<DiagGroup<"unused-command-line-argument">>;
 def warn_drv_not_using_clang_cpp : Warning<
   "not using the clang preprocessor due to user override">;

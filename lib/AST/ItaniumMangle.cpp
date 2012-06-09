@@ -535,6 +535,14 @@ isTemplate(const NamedDecl *ND, const TemplateArgumentList *&TemplateArgs) {
   return 0;
 }
 
+static bool isLambda(const NamedDecl *ND) {
+  const CXXRecordDecl *Record = dyn_cast<CXXRecordDecl>(ND);
+  if (!Record)
+    return false;
+  
+  return Record->isLambda();
+}
+
 void CXXNameMangler::mangleName(const NamedDecl *ND) {
   //  <name> ::= <nested-name>
   //         ::= <unscoped-name>
@@ -545,7 +553,9 @@ void CXXNameMangler::mangleName(const NamedDecl *ND) {
 
   // If this is an extern variable declared locally, the relevant DeclContext
   // is that of the containing namespace, or the translation unit.
-  if (isa<FunctionDecl>(DC) && ND->hasLinkage())
+  // FIXME: This is a hack; extern variables declared locally should have
+  // a proper semantic declaration context!
+  if (isa<FunctionDecl>(DC) && ND->hasLinkage() && !isLambda(ND))
     while (!DC->isNamespace() && !DC->isTranslationUnit())
       DC = getEffectiveParentContext(DC);
   else if (GetLocalClassDecl(ND)) {
@@ -1022,7 +1032,7 @@ static const FieldDecl *FindFirstNamedDataMember(const RecordDecl *RD) {
   
   for (RecordDecl::field_iterator I = RD->field_begin(), E = RD->field_end();
        I != E; ++I) {
-    const FieldDecl *FD = *I;
+    const FieldDecl *FD = &*I;
     
     if (FD->getIdentifier())
       return FD;
@@ -1882,12 +1892,23 @@ void CXXNameMangler::mangleType(const BuiltinType *T) {
 }
 
 // <type>          ::= <function-type>
-// <function-type> ::= F [Y] <bare-function-type> E
+// <function-type> ::= [<CV-qualifiers>] F [Y]
+//                      <bare-function-type> [<ref-qualifier>] E
+// (Proposal to cxx-abi-dev, 2012-05-11)
 void CXXNameMangler::mangleType(const FunctionProtoType *T) {
+  // Mangle CV-qualifiers, if present.  These are 'this' qualifiers,
+  // e.g. "const" in "int (A::*)() const".
+  mangleQualifiers(Qualifiers::fromCVRMask(T->getTypeQuals()));
+
   Out << 'F';
+
   // FIXME: We don't have enough information in the AST to produce the 'Y'
   // encoding for extern "C" function types.
   mangleBareFunctionType(T, /*MangleReturnType=*/true);
+
+  // Mangle the ref-qualifier, if present.
+  mangleRefQualifier(T->getRefQualifier());
+
   Out << 'E';
 }
 void CXXNameMangler::mangleType(const FunctionNoProtoType *T) {
@@ -1980,8 +2001,6 @@ void CXXNameMangler::mangleType(const MemberPointerType *T) {
   mangleType(QualType(T->getClass(), 0));
   QualType PointeeType = T->getPointeeType();
   if (const FunctionProtoType *FPT = dyn_cast<FunctionProtoType>(PointeeType)) {
-    mangleQualifiers(Qualifiers::fromCVRMask(FPT->getTypeQuals()));
-    mangleRefQualifier(FPT->getRefQualifier());
     mangleType(FPT);
     
     // Itanium C++ ABI 5.1.8:
@@ -1995,9 +2014,11 @@ void CXXNameMangler::mangleType(const MemberPointerType *T) {
     //   which the function is a member is considered part of the type of 
     //   function.
 
+    // Given that we already substitute member function pointers as a
+    // whole, the net effect of this rule is just to unconditionally
+    // suppress substitution on the function type in a member pointer.
     // We increment the SeqID here to emulate adding an entry to the
-    // substitution table. We can't actually add it because we don't want this
-    // particular function type to be substituted.
+    // substitution table.
     ++SeqID;
   } else
     mangleType(PointeeType);
@@ -2270,9 +2291,7 @@ void CXXNameMangler::mangleIntegerLiteral(QualType T,
 
 }
 
-/// Mangles a member expression.  Implicit accesses are not handled,
-/// but that should be okay, because you shouldn't be able to
-/// make an implicit access in a function template declaration.
+/// Mangles a member expression.
 void CXXNameMangler::mangleMemberExpr(const Expr *base,
                                       bool isArrow,
                                       NestedNameSpecifier *qualifier,
@@ -2281,8 +2300,17 @@ void CXXNameMangler::mangleMemberExpr(const Expr *base,
                                       unsigned arity) {
   // <expression> ::= dt <expression> <unresolved-name>
   //              ::= pt <expression> <unresolved-name>
-  Out << (isArrow ? "pt" : "dt");
-  mangleExpression(base);
+  if (base) {
+    if (base->isImplicitCXXThis()) {
+      // Note: GCC mangles member expressions to the implicit 'this' as
+      // *this., whereas we represent them as this->. The Itanium C++ ABI
+      // does not specify anything here, so we follow GCC.
+      Out << "dtdefpT";
+    } else {
+      Out << (isArrow ? "pt" : "dt");
+      mangleExpression(base);
+    }
+  }
   mangleUnresolvedName(qualifier, firstQualifierLookup, member, arity);
 }
 
@@ -2336,6 +2364,7 @@ void CXXNameMangler::mangleExpression(const Expr *E, unsigned Arity) {
   // <expr-primary> ::= L <type> <value number> E    # integer literal
   //                ::= L <type <value float> E      # floating literal
   //                ::= L <mangled-name> E           # external name
+  //                ::= fpT                          # 'this' expression
   QualType ImplicitlyConvertedToType;
   
 recurse:
@@ -2351,7 +2380,6 @@ recurse:
   // These all can only appear in local or variable-initialization
   // contexts and so should never appear in a mangling.
   case Expr::AddrLabelExprClass:
-  case Expr::CXXThisExprClass:
   case Expr::DesignatedInitExprClass:
   case Expr::ImplicitValueInitExprClass:
   case Expr::ParenListExprClass:
@@ -2373,7 +2401,7 @@ recurse:
   case Expr::ObjCProtocolExprClass:
   case Expr::ObjCSelectorExprClass:
   case Expr::ObjCStringLiteralClass:
-  case Expr::ObjCNumericLiteralClass:
+  case Expr::ObjCBoxedExprClass:
   case Expr::ObjCArrayLiteralClass:
   case Expr::ObjCDictionaryLiteralClass:
   case Expr::ObjCSubscriptRefExprClass:
@@ -2909,6 +2937,10 @@ recurse:
     mangleExpression(cast<MaterializeTemporaryExpr>(E)->GetTemporaryExpr());
     break;
   }
+      
+  case Expr::CXXThisExprClass:
+    Out << "fpT";
+    break;
   }
 }
 
@@ -3108,12 +3140,22 @@ void CXXNameMangler::mangleTemplateArg(const NamedDecl *P,
   case TemplateArgument::Declaration: {
     assert(P && "Missing template parameter for declaration argument");
     //  <expr-primary> ::= L <mangled-name> E # external name
-
+    //  <expr-primary> ::= L <type> 0 E
     // Clang produces AST's where pointer-to-member-function expressions
     // and pointer-to-function expressions are represented as a declaration not
     // an expression. We compensate for it here to produce the correct mangling.
-    NamedDecl *D = cast<NamedDecl>(A.getAsDecl());
     const NonTypeTemplateParmDecl *Parameter = cast<NonTypeTemplateParmDecl>(P);
+
+    // Handle NULL pointer arguments.
+    if (!A.getAsDecl()) {
+      Out << "L";
+      mangleType(Parameter->getType());
+      Out << "0E";
+      break;
+    }
+    
+
+    NamedDecl *D = cast<NamedDecl>(A.getAsDecl());
     bool compensateMangling = !Parameter->getType()->isReferenceType();
     if (compensateMangling) {
       Out << 'X';

@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -std=c++11 -analyze -analyzer-checker=core -analyzer-store region -verify %s
+// RUN: %clang_cc1 -std=c++11 -Wno-conversion-null -analyze -analyzer-checker=core -analyzer-store region -verify %s
 
 // test to see if nullptr is detected as a null pointer
 void foo1(void) {
@@ -55,7 +55,7 @@ void zoo2() {
   int **a = 0;
   int **b = 0;
   asm ("nop"
-      :"=a"(*a)
+      :"=r"(*a)
       :"0"(*b) // expected-warning{{Dereference of null pointer}}
       );
 }

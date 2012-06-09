@@ -48,6 +48,11 @@ def ext_bcpl_comment : Extension<
   InGroup<Comment>;
 def ext_no_newline_eof : Extension<"no newline at end of file">, 
   InGroup<DiagGroup<"newline-eof">>;
+
+def warn_cxx98_compat_no_newline_eof : Warning<
+  "C++98 requires newline at end of file">,
+  InGroup<CXX98CompatPedantic>, DefaultIgnore;
+
 def ext_dollar_in_identifier : Extension<"'$' in identifier">,
   InGroup<DiagGroup<"dollar-in-identifier-extension">>;
 def ext_charize_microsoft : Extension<"@# is a microsoft extension">,
@@ -151,6 +156,9 @@ def warn_cxx11_compat_reserved_user_defined_literal : Warning<
 def ext_reserved_user_defined_literal : ExtWarn<
   "invalid suffix on literal; C++11 requires a space between literal and "
   "identifier">, InGroup<ReservedUserDefinedLiteral>, DefaultError;
+def ext_ms_reserved_user_defined_literal : ExtWarn<
+  "invalid suffix on literal; C++11 requires a space between literal and "
+  "identifier">, InGroup<ReservedUserDefinedLiteral>;
 def err_unsupported_string_concat : Error<
   "unsupported non-standard concatenation of string literals">;
 def err_string_concat_mixed_suffix : Error<
@@ -169,6 +177,7 @@ def err_bad_character_encoding : Error<
 def warn_bad_character_encoding : ExtWarn<
   "illegal character encoding in character literal">,
   InGroup<DiagGroup<"invalid-source-encoding">>;
+def err_lexing_string : Error<"failure when lexing a string">;
 
 
 //===----------------------------------------------------------------------===//
@@ -226,7 +235,11 @@ def warn_pp_convert_lhs_to_positive : Warning<
 def warn_pp_convert_rhs_to_positive : Warning<
   "right side of operator converted from negative value to unsigned: %0">;
 
-def ext_pp_import_directive : Extension<"#import is a language extension">;
+def ext_pp_import_directive : Extension<"#import is a language extension">,
+  InGroup<DiagGroup<"import-preprocessor-directive-pedantic">>;
+def err_pp_import_directive_ms : Error<
+  "#import of type library is an unsupported Microsoft feature">;
+
 def ext_pp_ident_directive : Extension<"#ident is a language extension">;
 def ext_pp_include_next_directive : Extension<
   "#include_next is a language extension">;

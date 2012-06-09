@@ -25,9 +25,15 @@ def AmbigMemberTemplate : DiagGroup<"ambiguous-member-template">;
 def : DiagGroup<"attributes">;
 def : DiagGroup<"bad-function-cast">;
 def Availability : DiagGroup<"availability">;
+def Section : DiagGroup<"section">;
 def AutoImport : DiagGroup<"auto-import">;
-def BoolConversions : DiagGroup<"bool-conversions">;
-def IntConversions : DiagGroup<"int-conversions">;
+def ConstantConversion : DiagGroup<"constant-conversion">;
+def LiteralConversion : DiagGroup<"literal-conversion">;
+def StringConversion : DiagGroup<"string-conversion">;
+def SignConversion : DiagGroup<"sign-conversion">;
+def BoolConversion : DiagGroup<"bool-conversion">;
+def IntConversion : DiagGroup<"int-conversion">;
+def NullConversion : DiagGroup<"null-conversion">;
 def BuiltinRequiresHeader : DiagGroup<"builtin-requires-header">;
 def CXXCompat: DiagGroup<"c++-compat">;
 def CastAlign : DiagGroup<"cast-align">;
@@ -91,6 +97,7 @@ def CXX11Compat : DiagGroup<"c++11-compat",
 def : DiagGroup<"c++0x-compat", [CXX11Compat]>;
 
 def : DiagGroup<"effc++">;
+def DivZero : DiagGroup<"division-by-zero">;
 def ExitTimeDestructors : DiagGroup<"exit-time-destructors">;
 def FlexibleArrayExtensions : DiagGroup<"flexible-array-extensions">;
 def FourByteMultiChar : DiagGroup<"four-char-constants">;
@@ -140,9 +147,11 @@ def : DiagGroup<"overflow">;
 def OverlengthStrings : DiagGroup<"overlength-strings">;
 def OverloadedVirtual : DiagGroup<"overloaded-virtual">;
 def ObjCPropertyImpl : DiagGroup<"objc-property-implementation">;
+def ObjCPropertyNoAttribute : DiagGroup<"objc-property-no-attribute">;
 def ObjCMissingSuperCalls : DiagGroup<"objc-missing-super-calls">;
 def ObjCRetainBlockProperty : DiagGroup<"objc-noncopy-retain-block-property">;
 def ObjCReadonlyPropertyHasSetter : DiagGroup<"objc-readonly-with-setter-property">;
+def ObjCRootClass : DiagGroup<"objc-root-class">;
 def Packed : DiagGroup<"packed">;
 def Padded : DiagGroup<"padded">;
 def PointerArith : DiagGroup<"pointer-arith">;
@@ -200,12 +209,14 @@ def MethodDuplicate : DiagGroup<"duplicate-method-match">;
 def CoveredSwitchDefault : DiagGroup<"covered-switch-default">;
 def SwitchEnum     : DiagGroup<"switch-enum">;
 def Switch         : DiagGroup<"switch">;
+def ImplicitFallthrough  : DiagGroup<"implicit-fallthrough">;
 def Trigraphs      : DiagGroup<"trigraphs">;
 
 def : DiagGroup<"type-limits">;
 def Unicode  : DiagGroup<"unicode">;
-def Uninitialized  : DiagGroup<"uninitialized">;
 def UninitializedMaybe : DiagGroup<"conditional-uninitialized">;
+def UninitializedSometimes : DiagGroup<"sometimes-uninitialized">;
+def Uninitialized  : DiagGroup<"uninitialized", [UninitializedSometimes]>;
 def UnknownPragmas : DiagGroup<"unknown-pragmas">;
 def NSobjectAttribute : DiagGroup<"NSObject-attribute">;
 def UnknownAttributes : DiagGroup<"attributes">;
@@ -250,7 +261,7 @@ def SuperSubClassMismatch : DiagGroup<"super-class-method-mismatch">;
 def OverridingMethodMismatch : DiagGroup<"overriding-method-mismatch">;
 def : DiagGroup<"variadic-macros">;
 def VariadicMacros : DiagGroup<"variadic-macros">;
-def VectorConversions : DiagGroup<"vector-conversions">;      // clang specific
+def VectorConversion : DiagGroup<"vector-conversion">;      // clang specific
 def VexingParse : DiagGroup<"vexing-parse">;
 def VLA : DiagGroup<"vla">;
 def VolatileRegisterVar : DiagGroup<"volatile-register-var">;
@@ -282,14 +293,16 @@ def Parentheses : DiagGroup<"parentheses",
 //   - conversion warnings with constant sources are on by default
 //   - conversion warnings for literals are on by default
 //   - bool-to-pointer conversion warnings are on by default
+//   - __null-to-integer conversion warnings are on by default
 def Conversion : DiagGroup<"conversion",
                            [DiagGroup<"shorten-64-to-32">,
-                            DiagGroup<"constant-conversion">,
-                            DiagGroup<"literal-conversion">,
-                            DiagGroup<"string-conversion">,
-                            DiagGroup<"sign-conversion">,
-                            BoolConversions,
-                            IntConversions]>,
+                            ConstantConversion,
+                            LiteralConversion,
+                            StringConversion,
+                            SignConversion,
+                            BoolConversion,
+                            NullConversion,
+                            IntConversion]>,
                  DiagCategory<"Value Conversion Issue">;
 
 def Unused : DiagGroup<"unused",
@@ -346,7 +359,10 @@ def Most : DiagGroup<"most", [
  ]>;
 
 // Thread Safety warnings 
-def ThreadSafety : DiagGroup<"thread-safety">;
+def ThreadSafetyAttributes : DiagGroup<"thread-safety-attributes">;
+def ThreadSafetyAnalysis : DiagGroup<"thread-safety-analysis">;
+def ThreadSafety : DiagGroup<"thread-safety", 
+                             [ThreadSafetyAttributes, ThreadSafetyAnalysis]>;
 
 // Note that putting warnings in -Wall will not disable them by default. If a
 // warning should be active _only_ when -Wall is passed in, mark it as
@@ -357,6 +373,14 @@ def : DiagGroup<"all", [Most, Parentheses, Switch]>;
 def : DiagGroup<"", [Extra]>;                   // -W = -Wextra
 def : DiagGroup<"endif-labels", [ExtraTokens]>; // -Wendif-labels=-Wendif-tokens
 def : DiagGroup<"comments", [Comment]>;         // -Wcomments = -Wcomment
+def : DiagGroup<"conversion-null",
+                [NullConversion]>; // -Wconversion-null = -Wnull-conversion
+def : DiagGroup<"bool-conversions",
+                [BoolConversion]>; // -Wbool-conversions  = -Wbool-conversion
+def : DiagGroup<"int-conversions",
+                [IntConversion]>; // -Wint-conversions = -Wint-conversion
+def : DiagGroup<"vector-conversions",
+                [VectorConversion]>; // -Wvector-conversions = -Wvector-conversion
 
 // A warning group for warnings that we want to have on by default in clang,
 // but which aren't on by default in GCC.

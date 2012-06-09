@@ -151,7 +151,7 @@ public:
 
   static void Profile(llvm::FoldingSetNodeID &ID,
                       const ProgramPoint &Loc,
-                      ProgramStateRef state,
+                      const ProgramStateRef &state,
                       bool IsSink) {
     ID.Add(Loc);
     ID.AddPointer(state.getPtr());
@@ -172,6 +172,10 @@ public:
   bool pred_empty() const { return Preds.empty(); }
 
   bool isSink() const { return Succs.getFlag(); }
+
+   bool hasSinglePred() const {
+    return (pred_size() == 1);
+  }
 
   ExplodedNode *getFirstPred() {
     return pred_empty() ? NULL : *(pred_begin());

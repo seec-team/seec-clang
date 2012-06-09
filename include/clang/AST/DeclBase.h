@@ -15,6 +15,7 @@
 #define LLVM_CLANG_AST_DECLBASE_H
 
 #include "clang/AST/Attr.h"
+#include "clang/AST/DeclarationName.h"
 #include "clang/AST/Type.h"
 #include "clang/Basic/Specifiers.h"
 #include "llvm/ADT/PointerUnion.h"
@@ -692,17 +693,18 @@ public:
     Decl *Starter;
 
   public:
-    typedef Decl*                     value_type;
-    typedef Decl*                     reference;
-    typedef Decl*                     pointer;
+    typedef Decl                     value_type;
+    typedef value_type&              reference;
+    typedef value_type*              pointer;
     typedef std::forward_iterator_tag iterator_category;
     typedef std::ptrdiff_t            difference_type;
 
     redecl_iterator() : Current(0) { }
     explicit redecl_iterator(Decl *C) : Current(C), Starter(C) { }
 
-    reference operator*() const { return Current; }
+    reference operator*() const { return *Current; }
     pointer operator->() const { return Current; }
+    operator pointer() const { return Current; }
 
     redecl_iterator& operator++() {
       assert(Current && "Advancing while iterator has reached end");
@@ -861,7 +863,6 @@ public:
   void dumpXML(raw_ostream &OS) const;
 
 private:
-  const Attr *getAttrsImpl() const;
   void setAttrsImpl(const AttrVec& Attrs, ASTContext &Ctx);
   void setDeclContextsImpl(DeclContext *SemaDC, DeclContext *LexicalDC,
                            ASTContext &Ctx);
@@ -949,8 +950,11 @@ class DeclContext {
 
   /// \brief Pointer to the data structure used to lookup declarations
   /// within this context (or a DependentStoredDeclsMap if this is a
-  /// dependent context).
-  mutable StoredDeclsMap *LookupPtr;
+  /// dependent context), and a bool indicating whether we have lazily
+  /// omitted any declarations from the map. We maintain the invariant
+  /// that, if the map contains an entry for a DeclarationName, then it
+  /// contains all relevant entries for that name.
+  mutable llvm::PointerIntPair<StoredDeclsMap*, 1, bool> LookupPtr;
 
 protected:
   /// FirstDecl - The first declaration stored within this declaration
@@ -964,6 +968,7 @@ protected:
   mutable Decl *LastDecl;
 
   friend class ExternalASTSource;
+  friend class ASTWriter;
 
   /// \brief Build up a chain of declarations.
   ///
@@ -973,7 +978,7 @@ protected:
 
    DeclContext(Decl::Kind K)
      : DeclKind(K), ExternalLexicalStorage(false),
-       ExternalVisibleStorage(false), LookupPtr(0), FirstDecl(0),
+       ExternalVisibleStorage(false), LookupPtr(0, false), FirstDecl(0),
        LastDecl(0) { }
 
 public:
@@ -1234,8 +1239,8 @@ public:
     }
 
   public:
-    typedef SpecificDecl* value_type;
-    typedef SpecificDecl* reference;
+    typedef SpecificDecl value_type;
+    typedef SpecificDecl& reference;
     typedef SpecificDecl* pointer;
     typedef std::iterator_traits<DeclContext::decl_iterator>::difference_type
       difference_type;
@@ -1255,8 +1260,8 @@ public:
       SkipToNextDecl();
     }
 
-    reference operator*() const { return cast<SpecificDecl>(*Current); }
-    pointer operator->() const { return cast<SpecificDecl>(*Current); }
+    reference operator*() const { return *cast<SpecificDecl>(*Current); }
+    pointer operator->() const { return &**this; }
 
     specific_decl_iterator& operator++() {
       ++Current;
@@ -1317,7 +1322,7 @@ public:
 
     filtered_decl_iterator() : Current() { }
 
-    /// specific_decl_iterator - Construct a new iterator over a
+    /// filtered_decl_iterator - Construct a new iterator over a
     /// subset of the declarations the range [C,
     /// end-of-declarations). If A is non-NULL, it is a pointer to a
     /// member function of SpecificDecl that should return true for
@@ -1407,7 +1412,9 @@ public:
   /// and enumerator names preceding any tag name. Note that this
   /// routine will not look into parent contexts.
   lookup_result lookup(DeclarationName Name);
-  lookup_const_result lookup(DeclarationName Name) const;
+  lookup_const_result lookup(DeclarationName Name) const {
+    return const_cast<DeclContext*>(this)->lookup(Name);
+  }
 
   /// \brief A simplistic name lookup mechanism that performs name lookup
   /// into this declaration context without consulting the external source.
@@ -1434,6 +1441,14 @@ public:
   /// replaced with D.
   void makeDeclVisibleInContext(NamedDecl *D);
 
+  /// all_lookups_iterator - An iterator that provides a view over the results
+  /// of looking up every possible name.
+  class all_lookups_iterator;
+
+  all_lookups_iterator lookups_begin() const;
+
+  all_lookups_iterator lookups_end() const;
+
   /// udir_iterator - Iterates through the using-directives stored
   /// within this context.
   typedef UsingDirectiveDecl * const * udir_iterator;
@@ -1458,7 +1473,11 @@ public:
   // Low-level accessors
 
   /// \brief Retrieve the internal representation of the lookup structure.
-  StoredDeclsMap* getLookupPtr() const { return LookupPtr; }
+  /// This may omit some names if we are lazily building the structure.
+  StoredDeclsMap *getLookupPtr() const { return LookupPtr.getPointer(); }
+
+  /// \brief Ensure the lookup structure is fully-built and return it.
+  StoredDeclsMap *buildLookup();
 
   /// \brief Whether this DeclContext has external storage containing
   /// additional declarations that are lexically in this context.
@@ -1510,7 +1529,9 @@ private:
   friend class DependentDiagnostic;
   StoredDeclsMap *CreateStoredDeclsMap(ASTContext &C) const;
 
-  void makeDeclVisibleInContextWithFlags(NamedDecl *D, bool Internal);
+  void buildLookupImpl(DeclContext *DCtx);
+  void makeDeclVisibleInContextWithFlags(NamedDecl *D, bool Internal,
+                                         bool Rediscoverable);
   void makeDeclVisibleInContextImpl(NamedDecl *D, bool Internal);
 };
 
@@ -1611,6 +1632,23 @@ template<class FromTy>
 struct cast_convert_val< const ::clang::DeclContext, FromTy*, FromTy*> {
   static const ::clang::DeclContext *doit(const FromTy *Val) {
     return FromTy::castToDeclContext(Val);
+  }
+};
+
+// simplify_type - Allow clients to treat redecl_iterators just like Decl
+// pointers when using casting operators.
+template<> struct simplify_type< ::clang::Decl::redecl_iterator> {
+  typedef ::clang::Decl *SimpleType;
+  static SimpleType getSimplifiedValue(const ::clang::Decl::redecl_iterator
+      &Val) {
+    return Val;
+  }
+};
+template<> struct simplify_type<const ::clang::Decl::redecl_iterator> {
+  typedef ::clang::Decl *SimpleType;
+  static SimpleType getSimplifiedValue(const ::clang::Decl::redecl_iterator
+      &Val) {
+    return Val;
   }
 };
 

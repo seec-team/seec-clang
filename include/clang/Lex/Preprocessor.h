@@ -124,6 +124,9 @@ class Preprocessor : public RefCountedBase<Preprocessor> {
   /// \brief Whether we have already loaded macros from the external source.
   mutable bool ReadMacrosFromExternalSource : 1;
 
+  /// \brief True if we are pre-expanding macro arguments.
+  bool InMacroArgPreExpansion;
+
   /// Identifiers - This is mapping/lookup information for all identifiers in
   /// the program, including program keywords.
   mutable IdentifierTable Identifiers;
@@ -147,6 +150,10 @@ class Preprocessor : public RefCountedBase<Preprocessor> {
   /// \brief Tracks all of the comment handlers that the client registered
   /// with this preprocessor.
   std::vector<CommentHandler *> CommentHandlers;
+
+  /// \brief True if we want to ignore EOF token and continue later on (thus 
+  /// avoid tearing the Lexer and etc. down).
+  bool IncrementalProcessing;
 
   /// \brief The code-completion handler.
   CodeCompletionHandler *CodeComplete;
@@ -247,6 +254,15 @@ class Preprocessor : public RefCountedBase<Preprocessor> {
   /// encountered (e.g. a file is #included, etc).
   PPCallbacks *Callbacks;
 
+  struct MacroExpandsInfo {
+    Token Tok;
+    MacroInfo *MI;
+    SourceRange Range;
+    MacroExpandsInfo(Token Tok, MacroInfo *MI, SourceRange Range)
+      : Tok(Tok), MI(MI), Range(Range) { }
+  };
+  SmallVector<MacroExpandsInfo, 2> DelayedMacroExpandsCallbacks;
+
   /// Macros - For each IdentifierInfo with 'HasMacro' set, we keep a mapping
   /// to the actual definition of the macro.
   llvm::DenseMap<IdentifierInfo*, MacroInfo*> Macros;
@@ -344,7 +360,8 @@ public:
                ModuleLoader &TheModuleLoader,
                IdentifierInfoLookup *IILookup = 0,
                bool OwnsHeaderSearch = false,
-               bool DelayInitialization = false);
+               bool DelayInitialization = false,
+               bool IncrProcessing = false);
 
   ~Preprocessor();
 
@@ -691,6 +708,14 @@ public:
   /// \brief Recompute the current lexer kind based on the CurLexer/CurPTHLexer/
   /// CurTokenLexer pointers.
   void recomputeCurLexerKind();
+
+  /// \brief Returns true if incremental processing is enabled
+  bool isIncrementalProcessingEnabled() const { return IncrementalProcessing; }
+
+  /// \brief Enables the incremental processing
+  void enableIncrementalProcessing(bool value = true) {
+    IncrementalProcessing = value;
+  }
   
   /// \brief Specify the point at which code-completion will be performed.
   ///
@@ -1107,9 +1132,10 @@ private:
 
   /// ReadMacroDefinitionArgList - The ( starting an argument list of a macro
   /// definition has just been read.  Lex the rest of the arguments and the
-  /// closing ), updating MI with what we learn.  Return true if an error occurs
-  /// parsing the arg list.
-  bool ReadMacroDefinitionArgList(MacroInfo *MI);
+  /// closing ), updating MI with what we learn and saving in LastTok the
+  /// last token read.
+  /// Return true if an error occurs parsing the arg list.
+  bool ReadMacroDefinitionArgList(MacroInfo *MI, Token& LastTok);
 
   /// SkipExcludedConditionalBlock - We just read a #if or related directive and
   /// decided that the subsequent tokens are in the #if'd out portion of the
@@ -1237,6 +1263,7 @@ private:
   void HandleIncludeNextDirective(SourceLocation HashLoc, Token &Tok);
   void HandleIncludeMacrosDirective(SourceLocation HashLoc, Token &Tok);
   void HandleImportDirective(SourceLocation HashLoc, Token &Tok);
+  void HandleMicrosoftImportDirective(Token &Tok);
 
   // Macro handling.
   void HandleDefineDirective(Token &Tok);

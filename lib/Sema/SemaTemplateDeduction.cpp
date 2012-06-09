@@ -1586,8 +1586,7 @@ DeduceTemplateArguments(Sema &S,
 
   case TemplateArgument::Declaration:
     if (Arg.getKind() == TemplateArgument::Declaration &&
-        Param.getAsDecl()->getCanonicalDecl() ==
-          Arg.getAsDecl()->getCanonicalDecl())
+        isSameDeclaration(Param.getAsDecl(), Arg.getAsDecl()))
       return Sema::TDK_Success;
 
     Info.FirstArg = Param;
@@ -1858,8 +1857,7 @@ static bool isSameTemplateArg(ASTContext &Context,
              Context.getCanonicalType(Y.getAsType());
 
     case TemplateArgument::Declaration:
-      return X.getAsDecl()->getCanonicalDecl() ==
-             Y.getAsDecl()->getCanonicalDecl();
+      return isSameDeclaration(X.getAsDecl(), Y.getAsDecl());
 
     case TemplateArgument::Template:
     case TemplateArgument::TemplateExpansion:
@@ -1925,7 +1923,7 @@ getTrivialTemplateArgumentLoc(Sema &S,
   case TemplateArgument::Declaration: {
     Expr *E
       = S.BuildExpressionFromDeclTemplateArgument(Arg, NTTPType, Loc)
-    .takeAs<Expr>();
+          .takeAs<Expr>();
     return TemplateArgumentLoc(TemplateArgument(E), E);
   }
 
@@ -2312,23 +2310,42 @@ Sema::SubstituteExplicitTemplateArguments(
   // explicitly-specified template arguments. If the function has a trailing
   // return type, substitute it after the arguments to ensure we substitute
   // in lexical order.
-  if (Proto->hasTrailingReturn() &&
-      SubstParmTypes(Function->getLocation(),
-                     Function->param_begin(), Function->getNumParams(),
-                     MultiLevelTemplateArgumentList(*ExplicitArgumentList),
-                     ParamTypes))
-    return TDK_SubstitutionFailure;
-
+  if (Proto->hasTrailingReturn()) {
+    if (SubstParmTypes(Function->getLocation(),
+                       Function->param_begin(), Function->getNumParams(),
+                       MultiLevelTemplateArgumentList(*ExplicitArgumentList),
+                       ParamTypes))
+      return TDK_SubstitutionFailure;
+  }
+  
   // Instantiate the return type.
   // FIXME: exception-specifications?
-  QualType ResultType
-    = SubstType(Proto->getResultType(),
-                MultiLevelTemplateArgumentList(*ExplicitArgumentList),
-                Function->getTypeSpecStartLoc(),
-                Function->getDeclName());
-  if (ResultType.isNull() || Trap.hasErrorOccurred())
-    return TDK_SubstitutionFailure;
-
+  QualType ResultType;
+  {
+    // C++11 [expr.prim.general]p3:
+    //   If a declaration declares a member function or member function 
+    //   template of a class X, the expression this is a prvalue of type 
+    //   "pointer to cv-qualifier-seq X" between the optional cv-qualifer-seq
+    //   and the end of the function-definition, member-declarator, or 
+    //   declarator.
+    unsigned ThisTypeQuals = 0;
+    CXXRecordDecl *ThisContext = 0;
+    if (CXXMethodDecl *Method = dyn_cast<CXXMethodDecl>(Function)) {
+      ThisContext = Method->getParent();
+      ThisTypeQuals = Method->getTypeQualifiers();
+    }
+      
+    CXXThisScopeRAII ThisScope(*this, ThisContext, ThisTypeQuals,
+                               getLangOpts().CPlusPlus0x);
+    
+    ResultType = SubstType(Proto->getResultType(),
+                   MultiLevelTemplateArgumentList(*ExplicitArgumentList),
+                   Function->getTypeSpecStartLoc(),
+                   Function->getDeclName());
+    if (ResultType.isNull() || Trap.hasErrorOccurred())
+      return TDK_SubstitutionFailure;
+  }
+  
   // Instantiate the types of each of the function parameters given the
   // explicitly-specified template arguments if we didn't do so earlier.
   if (!Proto->hasTrailingReturn() &&
@@ -2808,9 +2825,7 @@ static bool AdjustFunctionParmAndArgTypesForDeduction(Sema &S,
     QualType PointeeType = ParamRefType->getPointeeType();
 
     // If the argument has incomplete array type, try to complete it's type.
-    if (ArgType->isIncompleteArrayType() &&
-        !S.RequireCompleteExprType(Arg, S.PDiag(), 
-                                   std::make_pair(SourceLocation(), S.PDiag())))
+    if (ArgType->isIncompleteArrayType() && !S.RequireCompleteExprType(Arg, 0))
       ArgType = Arg->getType();
 
     //   [C++0x] If P is an rvalue reference to a cv-unqualified
@@ -2904,6 +2919,44 @@ static bool AdjustFunctionParmAndArgTypesForDeduction(Sema &S,
 static bool hasDeducibleTemplateParameters(Sema &S,
                                            FunctionTemplateDecl *FunctionTemplate,
                                            QualType T);
+
+/// \brief Perform template argument deduction by matching a parameter type
+///        against a single expression, where the expression is an element of
+///        an initializer list that was originally matched against the argument
+///        type.
+static Sema::TemplateDeductionResult
+DeduceTemplateArgumentByListElement(Sema &S,
+                                    TemplateParameterList *TemplateParams,
+                                    QualType ParamType, Expr *Arg,
+                                    TemplateDeductionInfo &Info,
+                              SmallVectorImpl<DeducedTemplateArgument> &Deduced,
+                                    unsigned TDF) {
+  // Handle the case where an init list contains another init list as the
+  // element.
+  if (InitListExpr *ILE = dyn_cast<InitListExpr>(Arg)) {
+    QualType X;
+    if (!S.isStdInitializerList(ParamType.getNonReferenceType(), &X))
+      return Sema::TDK_Success; // Just ignore this expression.
+
+    // Recurse down into the init list.
+    for (unsigned i = 0, e = ILE->getNumInits(); i < e; ++i) {
+      if (Sema::TemplateDeductionResult Result =
+            DeduceTemplateArgumentByListElement(S, TemplateParams, X,
+                                                 ILE->getInit(i),
+                                                 Info, Deduced, TDF))
+        return Result;
+    }
+    return Sema::TDK_Success;
+  }
+
+  // For all other cases, just match by type.
+  QualType ArgType = Arg->getType();
+  if (AdjustFunctionParmAndArgTypesForDeduction(S, TemplateParams, ParamType, 
+                                                ArgType, Arg, TDF))
+    return Sema::TDK_FailedOverloadResolution;
+  return DeduceTemplateArgumentsByTypeMatch(S, TemplateParams, ParamType,
+                                            ArgType, Info, Deduced, TDF);
+}
 
 /// \brief Perform template argument deduction from a function call
 /// (C++ [temp.deduct.call]).
@@ -3025,9 +3078,9 @@ Sema::DeduceTemplateArguments(FunctionTemplateDecl *FunctionTemplate,
 
         for (unsigned i = 0, e = ILE->getNumInits(); i < e; ++i) {
           if (TemplateDeductionResult Result =
-                DeduceTemplateArgumentsByTypeMatch(*this, TemplateParams, X,
-                                                   ILE->getInit(i)->getType(),
-                                                   Info, Deduced, TDF))
+                DeduceTemplateArgumentByListElement(*this, TemplateParams, X,
+                                                     ILE->getInit(i),
+                                                     Info, Deduced, TDF))
             return Result;
         }
         // Don't track the argument type, since an initializer list has none.
@@ -3460,22 +3513,24 @@ Sema::DeduceAutoType(TypeSourceInfo *Type, Expr *&Init,
   Deduced.resize(1);
   QualType InitType = Init->getType();
   unsigned TDF = 0;
-  if (AdjustFunctionParmAndArgTypesForDeduction(*this, &TemplateParams,
-                                                FuncParam, InitType, Init,
-                                                TDF))
-    return DAR_Failed;
 
   TemplateDeductionInfo Info(Context, Loc);
 
   InitListExpr * InitList = dyn_cast<InitListExpr>(Init);
   if (InitList) {
     for (unsigned i = 0, e = InitList->getNumInits(); i < e; ++i) {
-      if (DeduceTemplateArgumentsByTypeMatch(*this, &TemplateParams, FuncParam,
-                                             InitList->getInit(i)->getType(),
-                                             Info, Deduced, TDF))
+      if (DeduceTemplateArgumentByListElement(*this, &TemplateParams, 
+                                              TemplArg,
+                                              InitList->getInit(i),
+                                              Info, Deduced, TDF))
         return DAR_Failed;
     }
   } else {
+    if (AdjustFunctionParmAndArgTypesForDeduction(*this, &TemplateParams,
+                                                  FuncParam, InitType, Init,
+                                                  TDF))
+      return DAR_Failed;
+    
     if (DeduceTemplateArgumentsByTypeMatch(*this, &TemplateParams, FuncParam,
                                            InitType, Info, Deduced, TDF))
       return DAR_Failed;
@@ -4370,7 +4425,7 @@ MarkUsedTemplateParameters(ASTContext &Ctx,
   switch (TemplateArg.getKind()) {
   case TemplateArgument::Null:
   case TemplateArgument::Integral:
-    case TemplateArgument::Declaration:
+  case TemplateArgument::Declaration:
     break;
 
   case TemplateArgument::Type:

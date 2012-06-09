@@ -529,3 +529,66 @@ MyEnum rdar10892489_positive() {
   return MyEnumValue;
 }
 
+// Test handling of catch with no condition variable.
+void PR11545() {
+  try
+  {
+      throw;
+  }
+  catch (...)
+  {
+  }
+}
+
+void PR11545_positive() {
+  try
+  {
+      throw;
+  }
+  catch (...)
+  {
+    int *p = 0;
+    *p = 0xDEADBEEF; // expected-warning {{null}}
+  }
+}
+
+// Test handling taking the address of a field.  While the analyzer
+// currently doesn't do anything intelligent here, this previously
+// resulted in a crash.
+class PR11146 {
+public:
+  struct Entry;
+  void baz();
+};
+
+struct PR11146::Entry {
+  int x;
+};
+
+void PR11146::baz() {
+  (void) &Entry::x;
+}
+
+// Test symbolicating a reference.  In this example, the
+// analyzer (originally) didn't know how to handle x[index - index2],
+// returning an UnknownVal.  The conjured symbol wasn't a location,
+// and would result in a crash.
+void rdar10924675(unsigned short x[], int index, int index2) {
+  unsigned short &y = x[index - index2];
+  if (y == 0)
+    return;
+}
+
+// Test handling CXXScalarValueInitExprs.
+void rdar11401827() {
+  int x = int();
+  if (!x) {
+    int *p = 0;
+    *p = 0xDEADBEEF; // expected-warning {{null pointer}}
+  }
+  else {
+    int *p = 0;
+    *p = 0xDEADBEEF;
+  }
+}
+
