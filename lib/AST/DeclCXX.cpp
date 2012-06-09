@@ -401,7 +401,7 @@ CXXConstructorDecl *CXXRecordDecl::getCopyConstructor(unsigned TypeQuals) const{
 CXXConstructorDecl *CXXRecordDecl::getMoveConstructor() const {
   for (ctor_iterator I = ctor_begin(), E = ctor_end(); I != E; ++I)
     if (I->isMoveConstructor())
-      return &*I;
+      return *I;
 
   return 0;
 }
@@ -459,7 +459,7 @@ CXXMethodDecl *CXXRecordDecl::getCopyAssignmentOperator(bool ArgIsConst) const {
 CXXMethodDecl *CXXRecordDecl::getMoveAssignmentOperator() const {
   for (method_iterator I = method_begin(), E = method_end(); I != E; ++I)
     if (I->isMoveAssignmentOperator())
-      return &*I;
+      return *I;
 
   return 0;
 }
@@ -468,6 +468,18 @@ void CXXRecordDecl::markedVirtualFunctionPure() {
   // C++ [class.abstract]p2: 
   //   A class is abstract if it has at least one pure virtual function.
   data().Abstract = true;
+}
+
+void CXXRecordDecl::markedConstructorConstexpr(CXXConstructorDecl *CD) {
+  if (CD->isCopyConstructor())
+    data().HasConstexprCopyConstructor = true;
+  else if (CD->isMoveConstructor())
+    data().HasConstexprMoveConstructor = true;
+  else
+    data().HasConstexprNonCopyMoveConstructor = true;
+
+  if (CD->isDefaultConstructor())
+    data().HasConstexprDefaultConstructor = true;
 }
 
 void CXXRecordDecl::addedMember(Decl *D) {
@@ -999,11 +1011,11 @@ void CXXRecordDecl::getCaptureFields(
   for (LambdaExpr::Capture *C = Lambda.Captures, *CEnd = C + Lambda.NumCaptures;
        C != CEnd; ++C, ++Field) {
     if (C->capturesThis()) {
-      ThisCapture = &*Field;
+      ThisCapture = *Field;
       continue;
     }
 
-    Captures[C->getCapturedVar()] = &*Field;
+    Captures[C->getCapturedVar()] = *Field;
   }
 }
 
@@ -1695,7 +1707,9 @@ bool CXXConstructorDecl::isConvertingConstructor(bool AllowExplicit) const {
   return (getNumParams() == 0 &&
           getType()->getAs<FunctionProtoType>()->isVariadic()) ||
          (getNumParams() == 1) ||
-         (getNumParams() > 1 && getParamDecl(1)->hasDefaultArg());
+         (getNumParams() > 1 &&
+          (getParamDecl(1)->hasDefaultArg() ||
+           getParamDecl(1)->isParameterPack()));
 }
 
 bool CXXConstructorDecl::isSpecializationCopyingObject() const {
