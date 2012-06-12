@@ -1347,6 +1347,9 @@ static void DiagnoseARCUseOfWeakReceiver(Sema &S, Expr *Receiver) {
   if (!Receiver)
     return;
   
+  if (OpaqueValueExpr *OVE = dyn_cast<OpaqueValueExpr>(Receiver))
+    Receiver = OVE->getSourceExpr();
+  
   Expr *RExpr = Receiver->IgnoreParenImpCasts();
   SourceLocation Loc = RExpr->getLocStart();
   QualType T = RExpr->getType();
@@ -1367,6 +1370,20 @@ static void DiagnoseARCUseOfWeakReceiver(Sema &S, Expr *Receiver) {
           T = PDecl->getType();
         }
       }
+    }
+  }
+  else if (ObjCMessageExpr *ME = dyn_cast<ObjCMessageExpr>(RExpr)) {
+    // See if receiver is a method which envokes a synthesized getter
+    // backing a 'weak' property.
+    ObjCMethodDecl *Method = ME->getMethodDecl();
+    if (Method && Method->isSynthesized()) {
+      Selector Sel = Method->getSelector();
+      if (Sel.getNumArgs() == 0)
+        PDecl = 
+          S.LookupPropertyDecl(Method->getClassInterface(), 
+                               Sel.getIdentifierInfoForSlot(0));
+      if (PDecl)
+        T = PDecl->getType();
     }
   }
   
@@ -1483,10 +1500,6 @@ HandleExprPropertyRefExpr(const ObjCObjectPointerType *OPT,
     SelectorTable::constructSetterName(PP.getIdentifierTable(),
                                        PP.getSelectorTable(), Member);
   ObjCMethodDecl *Setter = IFace->lookupInstanceMethod(SetterSel);
-  if (Setter && Setter->isSynthesized())
-    // Check for corner case of: @property int p; ... self.P = 0;
-    // setter name is synthesized "setP" but there is no property name 'P'.
-    Setter = 0;
       
   // May be founf in property's qualified list.
   if (!Setter)
@@ -2775,11 +2788,12 @@ namespace {
   };
 }
 
-static bool
-KnownName(Sema &S, const char *name) {
-  LookupResult R(S, &S.Context.Idents.get(name), SourceLocation(),
+bool Sema::isKnownName(StringRef name) {
+  if (name.empty())
+    return false;
+  LookupResult R(*this, &Context.Idents.get(name), SourceLocation(),
                  Sema::LookupOrdinaryName);
-  return S.LookupName(R, S.TUScope, false);
+  return LookupName(R, TUScope, false);
 }
 
 static void addFixitForObjCARCConversion(Sema &S,
@@ -2806,14 +2820,23 @@ static void addFixitForObjCARCConversion(Sema &S,
       castedE = CCE->getSubExpr();
     castedE = castedE->IgnoreImpCasts();
     SourceRange range = castedE->getSourceRange();
+
+    SmallString<32> BridgeCall;
+
+    SourceManager &SM = S.getSourceManager();
+    char PrevChar = *SM.getCharacterData(range.getBegin().getLocWithOffset(-1));
+    if (Lexer::isIdentifierBodyChar(PrevChar, S.getLangOpts()))
+      BridgeCall += ' ';
+
+    BridgeCall += CFBridgeName;
+
     if (isa<ParenExpr>(castedE)) {
       DiagB.AddFixItHint(FixItHint::CreateInsertion(range.getBegin(),
-                         CFBridgeName));
+                         BridgeCall));
     } else {
-      std::string namePlusParen = CFBridgeName;
-      namePlusParen += "(";
+      BridgeCall += '(';
       DiagB.AddFixItHint(FixItHint::CreateInsertion(range.getBegin(),
-                                                    namePlusParen));
+                                                    BridgeCall));
       DiagB.AddFixItHint(FixItHint::CreateInsertion(
                                        S.PP.getLocForEndOfToken(range.getEnd()),
                                        ")"));
@@ -2888,14 +2911,15 @@ diagnoseObjCARCConversion(Sema &S, SourceRange castRange,
       << castType
       << castRange
       << castExpr->getSourceRange();
-    bool br = KnownName(S, "CFBridgingRelease");
+    bool br = S.isKnownName("CFBridgingRelease");
     {
       DiagnosticBuilder DiagB = S.Diag(noteLoc, diag::note_arc_bridge);
       addFixitForObjCARCConversion(S, DiagB, CCK, afterLParen,
                                    castType, castExpr, "__bridge ", 0);
     }
     {
-      DiagnosticBuilder DiagB = S.Diag(noteLoc, diag::note_arc_bridge_transfer)
+      DiagnosticBuilder DiagB = S.Diag(br ? castExpr->getExprLoc() : noteLoc,
+                                       diag::note_arc_bridge_transfer)
         << castExprType << br;
       addFixitForObjCARCConversion(S, DiagB, CCK, afterLParen,
                                    castType, castExpr, "__bridge_transfer ",
@@ -2907,7 +2931,7 @@ diagnoseObjCARCConversion(Sema &S, SourceRange castRange,
     
   // Bridge from a CF type to an ARC type.
   if (exprACTC == ACTC_retainable && isAnyRetainable(castACTC)) {
-    bool br = KnownName(S, "CFBridgingRetain");
+    bool br = S.isKnownName("CFBridgingRetain");
     S.Diag(loc, diag::err_arc_cast_requires_bridge)
       << unsigned(CCK == Sema::CCK_ImplicitConversion) // cast|implicit
       << unsigned(castExprType->isBlockPointerType()) // of ObjC|block type
@@ -2923,7 +2947,8 @@ diagnoseObjCARCConversion(Sema &S, SourceRange castRange,
                                    castType, castExpr, "__bridge ", 0);
     }
     {
-      DiagnosticBuilder DiagB = S.Diag(noteLoc, diag::note_arc_bridge_retained)
+      DiagnosticBuilder DiagB = S.Diag(br ? castExpr->getExprLoc() : noteLoc,
+                                       diag::note_arc_bridge_retained)
         << castType << br;
       addFixitForObjCARCConversion(S, DiagB, CCK, afterLParen,
                                    castType, castExpr, "__bridge_retained ",
@@ -3160,7 +3185,7 @@ ExprResult Sema::BuildObjCBridgedCast(SourceLocation LParenLoc,
       break;
       
     case OBC_BridgeRetained: {
-      bool br = KnownName(*this, "CFBridgingRelease");
+      bool br = isKnownName("CFBridgingRelease");
       Diag(BridgeKeywordLoc, diag::err_arc_bridge_cast_wrong_kind)
         << 2
         << FromType
@@ -3203,7 +3228,7 @@ ExprResult Sema::BuildObjCBridgedCast(SourceLocation LParenLoc,
       break;
       
     case OBC_BridgeTransfer: {
-      bool br = KnownName(*this, "CFBridgingRetain");
+      bool br = isKnownName("CFBridgingRetain");
       Diag(BridgeKeywordLoc, diag::err_arc_bridge_cast_wrong_kind)
         << (FromType->isBlockPointerType()? 1 : 0)
         << FromType

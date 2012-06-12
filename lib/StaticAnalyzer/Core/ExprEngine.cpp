@@ -250,7 +250,7 @@ static bool shouldRemoveDeadBindings(AnalysisManager &AMgr,
     return true;
     
   // Run before processing a call.
-  if (isa<CallExpr>(S.getStmt()))
+  if (CallOrObjCMessage::canBeInlined(S.getStmt()))
     return true;
 
   // Is this an expression that is consumed by another expression?  If so,
@@ -667,6 +667,12 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
     case Stmt::AsmStmtClass:
       Bldr.takeNodes(Pred);
       VisitAsmStmt(cast<AsmStmt>(S), Pred, Dst);
+      Bldr.addNodes(Dst);
+      break;
+
+    case Stmt::MSAsmStmtClass:
+      Bldr.takeNodes(Pred);
+      VisitMSAsmStmt(cast<MSAsmStmt>(S), Pred, Dst);
       Bldr.addNodes(Dst);
       break;
 
@@ -1811,6 +1817,12 @@ void ExprEngine::VisitAsmStmt(const AsmStmt *A, ExplodedNode *Pred,
   }
 
   Bldr.generateNode(A, Pred, state);
+}
+
+void ExprEngine::VisitMSAsmStmt(const MSAsmStmt *A, ExplodedNode *Pred,
+                                ExplodedNodeSet &Dst) {
+  StmtNodeBuilder Bldr(Pred, Dst, *currentBuilderContext);
+  Bldr.generateNode(A, Pred, Pred->getState());
 }
 
 //===----------------------------------------------------------------------===//

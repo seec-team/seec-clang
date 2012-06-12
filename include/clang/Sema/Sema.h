@@ -37,6 +37,7 @@
 #include "clang/Basic/ExpressionTraits.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/OwningPtr.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include <deque>
@@ -266,6 +267,11 @@ public:
   
   /// FieldCollector - Collects CXXFieldDecls during parsing of C++ classes.
   OwningPtr<CXXFieldCollector> FieldCollector;
+
+  typedef llvm::SmallSetVector<const NamedDecl*, 16> NamedDeclSetType;
+
+  /// \brief Set containing all declared private fields that are not used.
+  NamedDeclSetType UnusedPrivateFields;
 
   typedef llvm::SmallPtrSet<const CXXRecordDecl*, 8> RecordDeclSetTy;
 
@@ -1414,13 +1420,15 @@ public:
                    Declarator &D, Expr *BitfieldWidth);
 
   FieldDecl *HandleField(Scope *S, RecordDecl *TagD, SourceLocation DeclStart,
-                         Declarator &D, Expr *BitfieldWidth, bool HasInit,
+                         Declarator &D, Expr *BitfieldWidth,
+                         InClassInitStyle InitStyle,
                          AccessSpecifier AS);
 
   FieldDecl *CheckFieldDecl(DeclarationName Name, QualType T,
                             TypeSourceInfo *TInfo,
                             RecordDecl *Record, SourceLocation Loc,
-                            bool Mutable, Expr *BitfieldWidth, bool HasInit,
+                            bool Mutable, Expr *BitfieldWidth,
+                            InClassInitStyle InitStyle,
                             SourceLocation TSSL,
                             AccessSpecifier AS, NamedDecl *PrevDecl,
                             Declarator *D = 0);
@@ -2107,6 +2115,7 @@ public:
   LiteralOperatorLookupResult LookupLiteralOperator(Scope *S, LookupResult &R,
                                                     ArrayRef<QualType> ArgTys,
                                                     bool AllowRawAndTemplate);
+  bool isKnownName(StringRef name);
 
   void ArgumentDependentLookup(DeclarationName Name, bool Operator,
                                SourceLocation Loc,
@@ -2521,6 +2530,9 @@ public:
                           SourceLocation RParenLoc,
                           bool MSAsm = false);
 
+  StmtResult ActOnMSAsmStmt(SourceLocation AsmLoc,
+                            std::string &AsmString,
+                            SourceLocation EndLoc);
 
   VarDecl *BuildObjCExceptionDecl(TypeSourceInfo *TInfo, QualType ExceptionType,
                                   SourceLocation StartLoc,
@@ -2691,7 +2703,7 @@ public:
   /// this variable in the innermost block or lambda. Only valid when the
   /// variable can be captured.
   ///
-  /// \param DeclRefType Will be set to the type of a refernce to the capture
+  /// \param DeclRefType Will be set to the type of a reference to the capture
   /// from within the current scope. Only valid when the variable can be 
   /// captured.
   ///
@@ -4134,7 +4146,7 @@ public:
                                  Declarator &D,
                                  MultiTemplateParamsArg TemplateParameterLists,
                                  Expr *BitfieldWidth, const VirtSpecifiers &VS,
-                                 bool HasDeferredInit);
+                                 InClassInitStyle InitStyle);
   void ActOnCXXInClassMemberInitializer(Decl *VarDecl, SourceLocation EqualLoc,
                                         Expr *Init);
 

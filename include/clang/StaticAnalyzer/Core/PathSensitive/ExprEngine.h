@@ -285,6 +285,10 @@ public:
 
   /// VisitAsmStmt - Transfer function logic for inline asm.
   void VisitAsmStmt(const AsmStmt *A, ExplodedNode *Pred, ExplodedNodeSet &Dst);
+
+  /// VisitMSAsmStmt - Transfer function logic for MS inline asm.
+  void VisitMSAsmStmt(const MSAsmStmt *A, ExplodedNode *Pred,
+                      ExplodedNodeSet &Dst);
   
   /// VisitBlockExpr - Transfer function logic for BlockExprs.
   void VisitBlockExpr(const BlockExpr *BE, ExplodedNode *Pred, 
@@ -494,7 +498,7 @@ private:
                     ProgramStateRef St, SVal location,
                     const ProgramPointTag *tag, bool isLoad);
 
-  bool shouldInlineDecl(const FunctionDecl *FD, ExplodedNode *Pred);
+  bool shouldInlineDecl(const Decl *D, ExplodedNode *Pred);
   bool InlineCall(ExplodedNodeSet &Dst, const CallExpr *CE, ExplodedNode *Pred);
 
   bool replayWithoutInlining(ExplodedNode *P, const LocationContext *CalleeLC);

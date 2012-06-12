@@ -828,19 +828,9 @@ static void getMipsCPUAndABI(const ArgList &Args,
     ABIName = getMipsABIFromArch(ArchName);
 }
 
-void Clang::AddMIPSTargetArgs(const ArgList &Args,
-                             ArgStringList &CmdArgs) const {
-  const Driver &D = getToolChain().getDriver();
-  StringRef CPUName;
-  StringRef ABIName;
-  getMipsCPUAndABI(Args, getToolChain(), CPUName, ABIName);
-
-  CmdArgs.push_back("-target-cpu");
-  CmdArgs.push_back(CPUName.data());
-
-  CmdArgs.push_back("-target-abi");
-  CmdArgs.push_back(ABIName.data());
-
+// Select the MIPS float ABI as determined by -msoft-float, -mhard-float,
+// and -mfloat-abi=.
+static StringRef getMipsFloatABI(const Driver &D, const ArgList &Args) {
   // Select the float ABI as determined by -msoft-float, -mhard-float,
   // and -mfloat-abi=.
   StringRef FloatABI;
@@ -854,8 +844,7 @@ void Clang::AddMIPSTargetArgs(const ArgList &Args,
     else {
       FloatABI = A->getValue(Args);
       if (FloatABI != "soft" && FloatABI != "single" && FloatABI != "hard") {
-        D.Diag(diag::err_drv_invalid_mfloat_abi)
-          << A->getAsString(Args);
+        D.Diag(diag::err_drv_invalid_mfloat_abi) << A->getAsString(Args);
         FloatABI = "hard";
       }
     }
@@ -868,6 +857,24 @@ void Clang::AddMIPSTargetArgs(const ArgList &Args,
     // we will be able to select the default more correctly.
     FloatABI = "hard";
   }
+
+  return FloatABI;
+}
+
+void Clang::AddMIPSTargetArgs(const ArgList &Args,
+                             ArgStringList &CmdArgs) const {
+  const Driver &D = getToolChain().getDriver();
+  StringRef CPUName;
+  StringRef ABIName;
+  getMipsCPUAndABI(Args, getToolChain(), CPUName, ABIName);
+
+  CmdArgs.push_back("-target-cpu");
+  CmdArgs.push_back(CPUName.data());
+
+  CmdArgs.push_back("-target-abi");
+  CmdArgs.push_back(ABIName.data());
+
+  StringRef FloatABI = getMipsFloatABI(D, Args);
 
   if (FloatABI == "soft") {
     // Floating point operations and argument passing are soft.
@@ -892,6 +899,72 @@ void Clang::AddMIPSTargetArgs(const ArgList &Args,
     assert(FloatABI == "hard" && "Invalid float abi!");
     CmdArgs.push_back("-mfloat-abi");
     CmdArgs.push_back("hard");
+  }
+}
+
+/// getPPCTargetCPU - Get the (LLVM) name of the PowerPC cpu we are targeting.
+static std::string getPPCTargetCPU(const ArgList &Args) {
+  if (Arg *A = Args.getLastArg(options::OPT_mcpu_EQ)) {
+    StringRef CPUName = A->getValue(Args);
+
+    if (CPUName == "native") {
+      std::string CPU = llvm::sys::getHostCPUName();
+      if (!CPU.empty() && CPU != "generic")
+        return CPU;
+      else
+        return "";
+    }
+
+    return llvm::StringSwitch<const char *>(CPUName)
+      .Case("common", "generic")
+      .Case("440", "440")
+      .Case("440fp", "440")
+      .Case("450", "450")
+      .Case("601", "601")
+      .Case("602", "602")
+      .Case("603", "603")
+      .Case("603e", "603e")
+      .Case("603ev", "603ev")
+      .Case("604", "604")
+      .Case("604e", "604e")
+      .Case("620", "620")
+      .Case("G3", "g3")
+      .Case("7400", "7400")
+      .Case("G4", "g4")
+      .Case("7450", "7450")
+      .Case("G4+", "g4+")
+      .Case("750", "750")
+      .Case("970", "970")
+      .Case("G5", "g5")
+      .Case("a2", "a2")
+      .Case("power6", "pwr6")
+      .Case("power7", "pwr7")
+      .Case("powerpc", "ppc")
+      .Case("powerpc64", "ppc64")
+      .Default("");
+  }
+
+  return "";
+}
+
+void Clang::AddPPCTargetArgs(const ArgList &Args,
+                             ArgStringList &CmdArgs) const {
+  std::string TargetCPUName = getPPCTargetCPU(Args);
+
+  // LLVM may default to generating code for the native CPU,
+  // but, like gcc, we default to a more generic option for
+  // each architecture. (except on Darwin)
+  llvm::Triple Triple = getToolChain().getTriple();
+  if (TargetCPUName.empty() && !Triple.isOSDarwin()) {
+    if (Triple.getArch() == llvm::Triple::ppc64)
+      TargetCPUName = "ppc64";
+    else
+      TargetCPUName = "ppc";
+  }
+
+  if (!TargetCPUName.empty()) {
+    CmdArgs.push_back("-target-cpu");
+    CmdArgs.push_back(Args.MakeArgString(TargetCPUName.c_str()));
   }
 }
 
@@ -1283,6 +1356,8 @@ static void addAsanRTLinux(const ToolChain &TC, const ArgList &Args,
     return;
   if(TC.getTriple().getEnvironment() == llvm::Triple::ANDROIDEABI) {
     if (!Args.hasArg(options::OPT_shared)) {
+      if (!Args.hasArg(options::OPT_pie))
+        TC.getDriver().Diag(diag::err_drv_asan_android_requires_pie);
       // For an executable, we add a .preinit_array stub.
       CmdArgs.push_back("-u");
       CmdArgs.push_back("__asan_preinit");
@@ -1529,22 +1604,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // This comes from the default translation the driver + cc1
   // would do to enable flag_pic.
-  //
-  // FIXME: Centralize this code.
-  Arg *LastPICArg = 0;
-  for (ArgList::const_iterator I = Args.begin(), E = Args.end(); I != E; ++I) {
-    if ((*I)->getOption().matches(options::OPT_fPIC) ||
-        (*I)->getOption().matches(options::OPT_fno_PIC) ||
-        (*I)->getOption().matches(options::OPT_fpic) ||
-        (*I)->getOption().matches(options::OPT_fno_pic) ||
-        (*I)->getOption().matches(options::OPT_fPIE) ||
-        (*I)->getOption().matches(options::OPT_fno_PIE) ||
-        (*I)->getOption().matches(options::OPT_fpie) ||
-        (*I)->getOption().matches(options::OPT_fno_pie)) {
-      LastPICArg = *I;
-      (*I)->claim();
-    }
-  }
+
+  Arg *LastPICArg = Args.getLastArg(options::OPT_fPIC, options::OPT_fno_PIC,
+                                    options::OPT_fpic, options::OPT_fno_pic,
+                                    options::OPT_fPIE, options::OPT_fno_PIE,
+                                    options::OPT_fpie, options::OPT_fno_pie);
   bool PICDisabled = false;
   bool PICEnabled = false;
   bool PICForPIE = false;
@@ -1780,6 +1844,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     AddMIPSTargetArgs(Args, CmdArgs);
     break;
 
+  case llvm::Triple::ppc:
+  case llvm::Triple::ppc64:
+    AddPPCTargetArgs(Args, CmdArgs);
+    break;
+
   case llvm::Triple::sparc:
     AddSparcTargetArgs(Args, CmdArgs);
     break;
@@ -1839,15 +1908,22 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                       D.CCLogDiagnosticsFilename : "-");
   }
 
-  // Special case debug options to only pass -g to clang. This is
-  // wrong.
+  // Use the last option from "-g" group. "-gline-tables-only" is
+  // preserved, all other debug options are substituted with "-g".
+  // FIXME: We should eventually do the following:
+  //   1) collapse gdb and dwarf variations to -g (as we do now);
+  //   2) support things like -gtoggle;
+  //   3) ignore flag options like -gstrict-dwarf or -grecord-gcc-switches;
+  //   4) produce a driver error on unsupported formats
+  //      (-gstabs, -gcoff, -gvms etc.)
   Args.ClaimAllArgs(options::OPT_g_Group);
-  if (Arg *A = Args.getLastArg(options::OPT_g_Group))
-    if (!A->getOption().matches(options::OPT_g0)) {
+  if (Arg *A = Args.getLastArg(options::OPT_g_Group)) {
+    if (A->getOption().matches(options::OPT_gline_tables_only)) {
+      CmdArgs.push_back("-gline-tables-only");
+    } else if (!A->getOption().matches(options::OPT_g0)) {
       CmdArgs.push_back("-g");
     }
-  if (Args.hasArg(options::OPT_gline_tables_only))
-    CmdArgs.push_back("-gline-tables-only");
+  }
 
   Args.AddAllArgs(CmdArgs, options::OPT_ffunction_sections);
   Args.AddAllArgs(CmdArgs, options::OPT_fdata_sections);
@@ -5141,6 +5217,18 @@ void linuxtools::Assemble::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-EB");
     else
       CmdArgs.push_back("-EL");
+
+    Arg *LastPICArg = Args.getLastArg(options::OPT_fPIC, options::OPT_fno_PIC,
+                                      options::OPT_fpic, options::OPT_fno_pic,
+                                      options::OPT_fPIE, options::OPT_fno_PIE,
+                                      options::OPT_fpie, options::OPT_fno_pie);
+    if (LastPICArg &&
+        (LastPICArg->getOption().matches(options::OPT_fPIC) ||
+         LastPICArg->getOption().matches(options::OPT_fpic) ||
+         LastPICArg->getOption().matches(options::OPT_fPIE) ||
+         LastPICArg->getOption().matches(options::OPT_fpie))) {
+      CmdArgs.push_back("-KPIC");
+    }
   }
 
   Args.AddAllArgValues(CmdArgs, options::OPT_Wa_COMMA,

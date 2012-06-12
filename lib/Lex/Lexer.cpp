@@ -127,7 +127,7 @@ Lexer::Lexer(FileID FID, const llvm::MemoryBuffer *InputFile, Preprocessor &PP)
 }
 
 /// Lexer constructor - Create a new raw lexer object.  This object is only
-/// suitable for calls to 'LexRawToken'.  This lexer assumes that the text
+/// suitable for calls to 'LexFromRawLexer'.  This lexer assumes that the text
 /// range will outlive it, so it doesn't take ownership of it.
 Lexer::Lexer(SourceLocation fileloc, const LangOptions &langOpts,
              const char *BufStart, const char *BufPtr, const char *BufEnd)
@@ -140,7 +140,7 @@ Lexer::Lexer(SourceLocation fileloc, const LangOptions &langOpts,
 }
 
 /// Lexer constructor - Create a new raw lexer object.  This object is only
-/// suitable for calls to 'LexRawToken'.  This lexer assumes that the text
+/// suitable for calls to 'LexFromRawLexer'.  This lexer assumes that the text
 /// range will outlive it, so it doesn't take ownership of it.
 Lexer::Lexer(FileID FID, const llvm::MemoryBuffer *FromFile,
              const SourceManager &SM, const LangOptions &langOpts)
@@ -1124,6 +1124,11 @@ static inline bool isRawStringDelimBody(unsigned char c) {
     true : false;
 }
 
+// Allow external clients to make use of CharInfo.
+bool Lexer::isIdentifierBodyChar(char c, const LangOptions &LangOpts) {
+  return isIdentifierBody(c) || (c == '$' && LangOpts.DollarIdents);
+}
+
 
 //===----------------------------------------------------------------------===//
 // Diagnostics forwarding code.
@@ -2022,7 +2027,7 @@ bool Lexer::SaveBCPLComment(Token &Result, const char *CurPtr) {
   // directly.
   FormTokenWithChars(Result, CurPtr, tok::comment);
 
-  if (!ParsingPreprocessorDirective)
+  if (!ParsingPreprocessorDirective || LexingRawMode)
     return true;
 
   // If this BCPL-style comment is in a macro definition, transmogrify it into
@@ -2043,8 +2048,8 @@ bool Lexer::SaveBCPLComment(Token &Result, const char *CurPtr) {
 }
 
 /// isBlockCommentEndOfEscapedNewLine - Return true if the specified newline
-/// character (either \n or \r) is part of an escaped newline sequence.  Issue a
-/// diagnostic if so.  We know that the newline is inside of a block comment.
+/// character (either \\n or \\r) is part of an escaped newline sequence.  Issue
+/// a diagnostic if so.  We know that the newline is inside of a block comment.
 static bool isEndOfBlockCommentWithEscapedNewLine(const char *CurPtr,
                                                   Lexer *L) {
   assert(CurPtr[0] == '\n' || CurPtr[0] == '\r');
@@ -2626,7 +2631,8 @@ LexNextToken:
       ParsingPreprocessorDirective = false;
 
       // Restore comment saving mode, in case it was disabled for directive.
-      SetCommentRetentionState(PP->getCommentRetentionState());
+      if (!LexingRawMode)
+        SetCommentRetentionState(PP->getCommentRetentionState());
 
       // Since we consumed a newline, we are back at the start of a line.
       IsAtStartOfLine = true;

@@ -198,7 +198,7 @@ void MicrosoftCXXNameMangler::mangleFunctionEncoding(const FunctionDecl *FD) {
   
   // We should never ever see a FunctionNoProtoType at this point.
   // We don't even know how to mangle their types anyway :).
-  const FunctionProtoType *FT = cast<FunctionProtoType>(FD->getType());
+  const FunctionProtoType *FT = FD->getType()->castAs<FunctionProtoType>();
 
   bool InStructor = false, InInstMethod = false;
   const CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(FD);
@@ -246,9 +246,9 @@ void MicrosoftCXXNameMangler::mangleVariableEncoding(const VarDecl *VD) {
   if (Ty->isPointerType() || Ty->isReferenceType()) {
     mangleType(Ty);
     Out << 'A';
-  } else if (Ty->isArrayType()) {
+  } else if (const ArrayType *AT = getASTContext().getAsArrayType(Ty)) {
     // Global arrays are funny, too.
-    mangleType(cast<ArrayType>(Ty.getTypePtr()), true);
+    mangleType(AT, true);
     Out << 'A';
   } else {
     mangleType(Ty.getLocalUnqualifiedType());
@@ -308,10 +308,11 @@ void MicrosoftCXXNameMangler::mangleNumber(const llvm::APSInt &Value) {
     mangleNumber(llvm::APSInt(Value.abs()));
     return;
   }
-  if (Value.uge(1) && Value.ule(10))
-    (Value-llvm::APSInt(llvm::APInt(Value.getBitWidth(), 1, Value.isSigned()))).print(Out,
-                                                                                   false);
-  else {
+  llvm::APSInt Temp(Value);
+  if (Value.uge(1) && Value.ule(10)) {
+    --Temp;
+    Temp.print(Out, false);
+  } else {
     // We have to build up the encoding in reverse order, so it will come
     // out right when we write it out.
     char Encoding[64];
@@ -320,8 +321,8 @@ void MicrosoftCXXNameMangler::mangleNumber(const llvm::APSInt &Value) {
     llvm::APSInt NibbleMask(Value.getBitWidth(), Value.isUnsigned());
     NibbleMask = 0xf;
     for (int i = 0, e = Value.getActiveBits() / 4; i != e; ++i) {
-      *--CurPtr = 'A' + Value.And(NibbleMask).lshr(i*4).getLimitedValue(0xf);
-      NibbleMask = NibbleMask.shl(4);
+      *--CurPtr = 'A' + Temp.And(NibbleMask).getLimitedValue(0xf);
+      Temp = Temp.lshr(4);
     };
     Out.write(CurPtr, EndPtr-CurPtr);
     Out << '@';
@@ -637,7 +638,7 @@ MicrosoftCXXNameMangler::mangleTemplateArgs(const TemplateArgument *TemplateArgs
       mangleType(TA.getAsType());
       break;
     case TemplateArgument::Integral:
-      mangleIntegerLiteral(TA.getIntegralType(), *TA.getAsIntegral());
+      mangleIntegerLiteral(TA.getIntegralType(), TA.getAsIntegral());
       break;
     default: {
     	// Issue a diagnostic.
@@ -1081,9 +1082,8 @@ void MicrosoftCXXNameMangler::mangleType(const IncompleteArrayType *T) {
 void MicrosoftCXXNameMangler::mangleExtraDimensions(QualType ElementTy) {
   SmallVector<llvm::APInt, 3> Dimensions;
   for (;;) {
-    if (ElementTy->isConstantArrayType()) {
-      const ConstantArrayType *CAT =
-      static_cast<const ConstantArrayType *>(ElementTy.getTypePtr());
+    if (const ConstantArrayType *CAT =
+          getASTContext().getAsConstantArrayType(ElementTy)) {
       Dimensions.push_back(CAT->getSize());
       ElementTy = CAT->getElementType();
     } else if (ElementTy->isVariableArrayType()) {
@@ -1112,13 +1112,13 @@ void MicrosoftCXXNameMangler::mangleExtraDimensions(QualType ElementTy) {
 //                                                          <class name> <type>
 void MicrosoftCXXNameMangler::mangleType(const MemberPointerType *T) {
   QualType PointeeType = T->getPointeeType();
-  if (const FunctionProtoType *FPT = dyn_cast<FunctionProtoType>(PointeeType)) {
+  if (const FunctionProtoType *FPT = PointeeType->getAs<FunctionProtoType>()) {
     Out << '8';
-    mangleName(cast<RecordType>(T->getClass())->getDecl());
+    mangleName(T->getClass()->castAs<RecordType>()->getDecl());
     mangleType(FPT, NULL, false, true);
   } else {
     mangleQualifiers(PointeeType.getQualifiers(), true);
-    mangleName(cast<RecordType>(T->getClass())->getDecl());
+    mangleName(T->getClass()->castAs<RecordType>()->getDecl());
     mangleType(PointeeType.getLocalUnqualifiedType());
   }
 }
@@ -1139,12 +1139,11 @@ void MicrosoftCXXNameMangler::mangleType(const PointerType *T) {
   QualType PointeeTy = T->getPointeeType();
   if (PointeeTy->isArrayType()) {
     // Pointers to arrays are mangled like arrays.
-    mangleExtraDimensions(T->getPointeeType());
-  } else if (PointeeTy->isFunctionType()) {
+    mangleExtraDimensions(PointeeTy);
+  } else if (const FunctionType *FT = PointeeTy->getAs<FunctionType>()) {
     // Function pointers are special.
     Out << '6';
-    mangleType(static_cast<const FunctionType *>(PointeeTy.getTypePtr()),
-               NULL, false, false);
+    mangleType(FT, NULL, false, false);
   } else {
     if (!PointeeTy.hasQualifiers())
       // Lack of qualifiers is mangled as 'A'.

@@ -20,6 +20,10 @@ def warn_variables_not_in_loop_body : Warning<
   "used in loop condition not modified in loop body">,
   InGroup<DiagGroup<"loop-analysis">>, DefaultIgnore;
 
+def warn_identical_enum_values : Warning<
+  "all elements of %0 are initialized with literals to value %1">,
+  InGroup<DiagGroup<"unique-enum">>;
+
 // Constant expressions
 def err_expr_not_ice : Error<
   "expression is not an %select{integer|integral}0 constant expression">;
@@ -169,6 +173,8 @@ def warn_unneeded_internal_decl : Warning<
 def warn_unneeded_member_function : Warning<
   "member function %0 is not needed and will not be emitted">,
   InGroup<UnneededMemberFunction>, DefaultIgnore;
+def warn_unused_private_field: Warning<"private field %0 is not used">,
+  InGroup<UnusedPrivateField>, DefaultIgnore;
 
 def warn_parameter_size: Warning<
   "%0 is a large (%1 bytes) pass-by-value argument; "
@@ -331,10 +337,14 @@ def warn_dyn_class_memaccess : Warning<
 def note_bad_memaccess_silence : Note<
   "explicitly cast the pointer to silence this warning">;
 def warn_sizeof_pointer_expr_memaccess : Warning<
-  "argument to 'sizeof' in %0 call is the same expression as the "
-  "%select{destination|source}1; did you mean to "
-  "%select{dereference it|remove the addressof|provide an explicit length}2?">,
+  "'%0' call operates on objects of type %1 while the size is based on a " 
+  "different type %2">, 
   InGroup<DiagGroup<"sizeof-pointer-memaccess">>;
+def warn_sizeof_pointer_expr_memaccess_note : Note<
+  "did you mean to %select{dereference the argument to 'sizeof' (and multiply "
+  "it by the number of elements)|remove the addressof in the argument to "
+  "'sizeof' (and multiply it by the number of elements)|provide an explicit "
+  "length}0?">;
 def warn_sizeof_pointer_type_memaccess : Warning<
   "argument to 'sizeof' in %0 call is the same pointer type %1 as the "
   "%select{destination|source}2; expected %3 or an explicit length">,
@@ -1147,6 +1157,10 @@ def err_reference_bind_failed : Error<
   "%2">;
 def err_reference_bind_init_list : Error<
   "reference to type %0 cannot bind to an initializer list">;
+def warn_temporary_array_to_pointer_decay : Warning<
+  "pointer is initialized by a temporary array, which will be destroyed at the "
+  "end of the full-expression">,
+  InGroup<DiagGroup<"address-of-array-temporary">>;
 def err_init_list_bad_dest_type : Error<
   "%select{|non-aggregate }0type %1 cannot be initialized with an initializer "
   "list">;
@@ -1455,6 +1469,10 @@ def warn_cxx98_compat_unicode_type : Warning<
 // Objective-C++
 def err_objc_decls_may_only_appear_in_global_scope : Error<
   "Objective-C declarations may only appear in global scope">;
+def warn_auto_var_is_id : Warning<
+  "'auto' deduced as 'id' in declaration of %0">,
+  InGroup<DiagGroup<"auto-var-id">>;
+
 // Attributes
 def err_nsobject_attribute : Error<
   "__attribute ((NSObject)) is for pointer types only">;
@@ -1579,6 +1597,10 @@ def err_invalid_collection_element : Error<
 def err_box_literal_collection : Error<
   "%select{string|character|boolean|numeric}0 literal must be prefixed by '@' "
   "in a collection">;
+def err_objc_literal_comparison : Error<
+  "direct comparison of %select{a string literal|an array literal|"
+  "a dictionary literal|a numeric literal|a boxed expression|}0 is not "
+  "allowed%select{|; use -isEqual: instead}1">;
 
 let CategoryName = "Cocoa API Issue" in {
 def warn_objc_redundant_literal_use : Warning<
@@ -4322,10 +4344,6 @@ let CategoryName = "Lambda Issue" in {
   def note_lambda_decl : Note<"lambda expression begins here">;
   def err_lambda_unevaluated_operand : Error<
     "lambda expression in an unevaluated operand">;
-  def ext_lambda_implies_void_return : ExtWarn<
-    "C++11 requires lambda with omitted result type to consist of a single "
-    "return statement">,
-    InGroup<LambdaExtensions>;
   def err_lambda_return_init_list : Error<
     "cannot deduce lambda return type from initializer list">;
   def err_lambda_capture_default_arg : Error<
@@ -5289,6 +5307,9 @@ def warn_missing_cases : Warning<
 def warn_unannotated_fallthrough : Warning<
   "unannotated fall-through between switch labels">,
   InGroup<ImplicitFallthrough>, DefaultIgnore;
+def warn_unannotated_fallthrough_per_method : Warning<
+  "unannotated fall-through between switch labels in partly annotated method">,
+  InGroup<ImplicitFallthroughPerMethod>, DefaultIgnore;
 def note_insert_fallthrough_fixit : Note<
   "insert '[[clang::fallthrough]];' to silence this warning">;
 def note_insert_break_fixit : Note<

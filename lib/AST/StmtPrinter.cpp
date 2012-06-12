@@ -429,6 +429,11 @@ void StmtPrinter::VisitAsmStmt(AsmStmt *Node) {
   OS << ");\n";
 }
 
+void StmtPrinter::VisitMSAsmStmt(MSAsmStmt *Node) {
+  // FIXME: Implement MS style inline asm statement printer.
+  Indent() << "asm ()";
+}
+
 void StmtPrinter::VisitObjCAtTryStmt(ObjCAtTryStmt *Node) {
   Indent() << "@try";
   if (CompoundStmt *TS = dyn_cast<CompoundStmt>(Node->getTryBody())) {
@@ -1275,7 +1280,7 @@ void StmtPrinter::VisitUserDefinedLiteral(UserDefinedLiteral *Node) {
     const TemplateArgument &Pack = Args->get(0);
     for (TemplateArgument::pack_iterator I = Pack.pack_begin(),
                                          E = Pack.pack_end(); I != E; ++I) {
-      char C = (char)I->getAsIntegral()->getZExtValue();
+      char C = (char)I->getAsIntegral().getZExtValue();
       OS << C;
     }
     break;
