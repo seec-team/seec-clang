@@ -792,10 +792,10 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
     MaybeParseCXX0XAttributes(Attr, &DeclEndLoc);
 
     // Parse trailing-return-type[opt].
-    ParsedType TrailingReturnType;
+    TypeResult TrailingReturnType;
     if (Tok.is(tok::arrow)) {
       SourceRange Range;
-      TrailingReturnType = ParseTrailingReturnType(Range).get();
+      TrailingReturnType = ParseTrailingReturnType(Range);
       if (Range.getEnd().isValid())
         DeclEndLoc = Range.getEnd();
     }
@@ -838,10 +838,10 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
     }
     
     // Parse the return type, if there is one.
-    ParsedType TrailingReturnType;
+    TypeResult TrailingReturnType;
     if (Tok.is(tok::arrow)) {
       SourceRange Range;
-      TrailingReturnType = ParseTrailingReturnType(Range).get();
+      TrailingReturnType = ParseTrailingReturnType(Range);
       if (Range.getEnd().isValid())
         DeclEndLoc = Range.getEnd();      
     }
@@ -1374,39 +1374,6 @@ bool Parser::ParseCXXCondition(ExprResult &ExprOut,
 
   Actions.FinalizeDeclaration(DeclOut);
   
-  return false;
-}
-
-/// \brief Determine whether the current token starts a C++
-/// simple-type-specifier.
-bool Parser::isCXXSimpleTypeSpecifier() const {
-  switch (Tok.getKind()) {
-  case tok::annot_typename:
-  case tok::kw_short:
-  case tok::kw_long:
-  case tok::kw___int64:
-  case tok::kw___int128:
-  case tok::kw_signed:
-  case tok::kw_unsigned:
-  case tok::kw_void:
-  case tok::kw_char:
-  case tok::kw_int:
-  case tok::kw_half:
-  case tok::kw_float:
-  case tok::kw_double:
-  case tok::kw_wchar_t:
-  case tok::kw_char16_t:
-  case tok::kw_char32_t:
-  case tok::kw_bool:
-  case tok::kw_decltype:
-  case tok::kw_typeof:
-  case tok::kw___underlying_type:
-    return true;
-
-  default:
-    break;
-  }
-
   return false;
 }
 

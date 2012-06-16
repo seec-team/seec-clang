@@ -1751,8 +1751,8 @@ bool Parser::ParseImplicitInt(DeclSpec &DS, CXXScopeSpec *SS,
   // This is almost certainly an invalid type name. Let the action emit a 
   // diagnostic and attempt to recover.
   ParsedType T;
-  if (Actions.DiagnoseUnknownTypeName(*Tok.getIdentifierInfo(), Loc,
-                                      getCurScope(), SS, T)) {
+  IdentifierInfo *II = Tok.getIdentifierInfo();
+  if (Actions.DiagnoseUnknownTypeName(II, Loc, getCurScope(), SS, T)) {
     // The action emitted a diagnostic, so we don't have to.
     if (T) {
       // The action has suggested that the type T could be used. Set that as
@@ -1763,7 +1763,11 @@ bool Parser::ParseImplicitInt(DeclSpec &DS, CXXScopeSpec *SS,
       DS.SetTypeSpecType(DeclSpec::TST_typename, Loc, PrevSpec, DiagID, T);
       DS.SetRangeEnd(Tok.getLocation());
       ConsumeToken();
-      
+      // There may be other declaration specifiers after this.
+      return true;
+    } else if (II != Tok.getIdentifierInfo()) {
+      // If no type was suggested, the correction is to a keyword
+      Tok.setKind(II->getTokenID());
       // There may be other declaration specifiers after this.
       return true;
     }
@@ -4276,7 +4280,7 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
   SmallVector<SourceRange, 2> DynamicExceptionRanges;
   ExprResult NoexceptExpr;
   ParsedAttributes FnAttrs(AttrFactory);
-  ParsedType TrailingReturnType;
+  TypeResult TrailingReturnType;
 
   Actions.ActOnStartFunctionDeclarator();
 
@@ -4358,7 +4362,7 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
       if (getLangOpts().CPlusPlus0x && Tok.is(tok::arrow)) {
         Diag(Tok, diag::warn_cxx98_compat_trailing_return_type);
         SourceRange Range;
-        TrailingReturnType = ParseTrailingReturnType(Range).get();
+        TrailingReturnType = ParseTrailingReturnType(Range);
         if (Range.getEnd().isValid())
           EndLoc = Range.getEnd();
       }

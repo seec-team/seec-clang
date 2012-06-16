@@ -430,7 +430,7 @@ Decl *TemplateDeclInstantiator::VisitFieldDecl(FieldDecl *D) {
                                             D->getLocation(),
                                             D->isMutable(),
                                             BitWidth,
-                                            D->hasInClassInitializer(),
+                                            D->getInClassInitStyle(),
                                             D->getInnerLocStart(),
                                             D->getAccess(),
                                             0);
@@ -3240,8 +3240,8 @@ DeclContext *Sema::FindInstantiatedContext(SourceLocation Loc, DeclContext* DC,
 ///
 /// In the instantiation of X<int>::getKind(), we need to map the
 /// EnumConstantDecl for KnownValue (which refers to
-/// X<T>::<Kind>::KnownValue) to its instantiation
-/// (X<int>::<Kind>::KnownValue). InstantiateCurrentDeclRef() performs
+/// X<T>::\<Kind>::\KnownValue) to its instantiation
+/// (X<int>::\<Kind>\::KnownValue). InstantiateCurrentDeclRef() performs
 /// this mapping from within the instantiation of X<int>.
 NamedDecl *Sema::FindInstantiatedDecl(SourceLocation Loc, NamedDecl *D,
                           const MultiLevelTemplateArgumentList &TemplateArgs) {

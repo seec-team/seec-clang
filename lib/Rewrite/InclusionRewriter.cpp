@@ -174,16 +174,6 @@ InclusionRewriter::FindFileChangeLocation(SourceLocation Loc) const {
   return NULL;
 }
 
-/// Count the raw \\n characters in the \p Len characters from \p Pos.
-inline unsigned CountNewLines(const char *Pos, int Len) {
-  const char *End = Pos + Len;
-  unsigned Lines = 0;
-  --Pos;
-  while ((Pos = static_cast<const char*>(memchr(Pos + 1, '\n', End - Pos - 1))))
-    ++Lines;
-  return Lines;
-}
-
 /// Detect the likely line ending style of \p FromFile by examining the first
 /// newline found within it.
 static StringRef DetectEOL(const MemoryBuffer &FromFile) {
@@ -209,8 +199,8 @@ void InclusionRewriter::OutputContentUpTo(const MemoryBuffer &FromFile,
     return;
   OS.write(FromFile.getBufferStart() + WriteFrom, WriteTo - WriteFrom);
   // count lines manually, it's faster than getPresumedLoc()
-  Line += CountNewLines(FromFile.getBufferStart() + WriteFrom,
-                        WriteTo - WriteFrom);
+  Line += std::count(FromFile.getBufferStart() + WriteFrom,
+                     FromFile.getBufferStart() + WriteTo, '\n');
   if (EnsureNewline) {
     char LastChar = FromFile.getBufferStart()[WriteTo - 1];
     if (LastChar != '\n' && LastChar != '\r')
@@ -235,11 +225,11 @@ void InclusionRewriter::CommentOutDirective(Lexer &DirectiveLex,
   do {
     DirectiveLex.LexFromRawLexer(DirectiveToken);
   } while (!DirectiveToken.is(tok::eod) && DirectiveToken.isNot(tok::eof));
-  OS << "#if 0 /* expanded by -rewrite-includes */" << EOL;
+  OS << "#if 0 /* expanded by -frewrite-includes */" << EOL;
   OutputContentUpTo(FromFile, NextToWrite,
     SM.getFileOffset(DirectiveToken.getLocation()) + DirectiveToken.getLength(),
     EOL, Line);
-  OS << "#endif /* expanded by -rewrite-includes */" << EOL;
+  OS << "#endif /* expanded by -frewrite-includes */" << EOL;
 }
 
 /// Find the next identifier in the pragma directive specified by \p RawToken.
@@ -260,7 +250,8 @@ bool InclusionRewriter::Process(FileID FileId,
 {
   bool Invalid;
   const MemoryBuffer &FromFile = *SM.getBuffer(FileId, &Invalid);
-  assert(!Invalid && "Invalid FileID while trying to rewrite includes");
+  if (Invalid) // invalid inclusion
+    return true;
   const char *FileName = FromFile.getBufferIdentifier();
   Lexer RawLex(FileId, &FromFile, PP.getSourceManager(), PP.getLangOpts());
   RawLex.SetCommentRetentionState(false);
@@ -344,7 +335,7 @@ bool InclusionRewriter::Process(FileID FileId,
   return true;
 }
 
-/// InclusionRewriterInInput - Implement -rewrite-includes mode.
+/// InclusionRewriterInInput - Implement -frewrite-includes mode.
 void clang::RewriteIncludesInInput(Preprocessor &PP, raw_ostream *OS,
                                    const PreprocessorOutputOptions &Opts) {
   SourceManager &SM = PP.getSourceManager();

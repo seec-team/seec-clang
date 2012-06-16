@@ -405,7 +405,7 @@ namespace clang {
       /// sets.
       CXX_BASE_SPECIFIER_OFFSETS = 37,
 
-      /// \brief Record code for #pragma diagnostic mappings.
+      /// \brief Record code for \#pragma diagnostic mappings.
       DIAG_PRAGMA_MAPPINGS = 38,
 
       /// \brief Record code for special CUDA declarations.
@@ -417,7 +417,7 @@ namespace clang {
       /// \brief The directory that the PCH was originally created in.
       ORIGINAL_PCH_DIR = 41,
 
-      /// \brief Record code for floating point #pragma options.
+      /// \brief Record code for floating point \#pragma options.
       FP_PRAGMA_OPTIONS = 42,
 
       /// \brief Record code for enabled OpenCL extensions.
@@ -441,7 +441,7 @@ namespace clang {
       MODULE_OFFSET_MAP = 47,
 
       /// \brief Record code for the source manager line table information,
-      /// which stores information about #line directives.
+      /// which stores information about \#line directives.
       SOURCE_MANAGER_LINE_TABLE = 48,
 
       /// \brief Record code for map of Objective-C class definition IDs to the 
@@ -469,7 +469,7 @@ namespace clang {
       ///
       /// This array can only be interpreted properly using the Objective-C
       /// categories map.
-      OBJC_CATEGORIES
+      OBJC_CATEGORIES = 54
     };
 
     /// \brief Record types used within a source manager block.
@@ -500,8 +500,8 @@ namespace clang {
       PP_MACRO_OBJECT_LIKE = 1,
 
       /// \brief A function-like macro definition.
-      /// [PP_MACRO_FUNCTION_LIKE, <ObjectLikeStuff>, IsC99Varargs, IsGNUVarars,
-      ///  NumArgs, ArgIdentInfoID* ]
+      /// [PP_MACRO_FUNCTION_LIKE, \<ObjectLikeStuff>, IsC99Varargs,
+      /// IsGNUVarars, NumArgs, ArgIdentInfoID* ]
       PP_MACRO_FUNCTION_LIKE = 2,
 
       /// \brief Describes one token.
@@ -557,7 +557,7 @@ namespace clang {
     ///
     /// These type IDs correspond to predefined types in the AST
     /// context, such as built-in types (int) and special place-holder
-    /// types (the <overload> and <dependent> type markers). Such
+    /// types (the \<overload> and \<dependent> type markers). Such
     /// types are never actually serialized, since they will be built
     /// by the AST context when it is created.
     enum PredefinedTypeIDs {
@@ -1089,7 +1089,7 @@ namespace clang {
       EXPR_OBJC_MESSAGE_EXPR,
       /// \brief An ObjCIsa Expr record.
       EXPR_OBJC_ISA,
-      /// \breif An ObjCIndirectCopyRestoreExpr record.
+      /// \brief An ObjCIndirectCopyRestoreExpr record.
       EXPR_OBJC_INDIRECT_COPY_RESTORE,
 
       /// \brief An ObjCForCollectionStmt record.

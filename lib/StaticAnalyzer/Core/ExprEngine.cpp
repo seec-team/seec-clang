@@ -670,6 +670,12 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
       Bldr.addNodes(Dst);
       break;
 
+    case Stmt::MSAsmStmtClass:
+      Bldr.takeNodes(Pred);
+      VisitMSAsmStmt(cast<MSAsmStmt>(S), Pred, Dst);
+      Bldr.addNodes(Dst);
+      break;
+
     case Stmt::BlockExprClass:
       Bldr.takeNodes(Pred);
       VisitBlockExpr(cast<BlockExpr>(S), Pred, Dst);
@@ -1590,9 +1596,9 @@ void ExprEngine::evalBind(ExplodedNodeSet &Dst, const Stmt *StoreE,
 
 /// evalStore - Handle the semantics of a store via an assignment.
 ///  @param Dst The node set to store generated state nodes
-///  @param AssignE The assignment expression if the store happens in an 
+///  @param AssignE The assignment expression if the store happens in an
 ///         assignment.
-///  @param LocatioinE The location expression that is stored to.
+///  @param LocationE The location expression that is stored to.
 ///  @param state The current simulation state
 ///  @param location The location to store the value
 ///  @param Val The value to be stored
@@ -1811,6 +1817,12 @@ void ExprEngine::VisitAsmStmt(const AsmStmt *A, ExplodedNode *Pred,
   }
 
   Bldr.generateNode(A, Pred, state);
+}
+
+void ExprEngine::VisitMSAsmStmt(const MSAsmStmt *A, ExplodedNode *Pred,
+                                ExplodedNodeSet &Dst) {
+  StmtNodeBuilder Bldr(Pred, Dst, *currentBuilderContext);
+  Bldr.generateNode(A, Pred, Pred->getState());
 }
 
 //===----------------------------------------------------------------------===//

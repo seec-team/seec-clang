@@ -1342,14 +1342,6 @@ void ASTContext::setBlockVarCopyInits(VarDecl*VD, Expr* Init) {
   BlockVarCopyInits[VD] = Init;
 }
 
-/// \brief Allocate an uninitialized TypeSourceInfo.
-///
-/// The caller should initialize the memory held by TypeSourceInfo using
-/// the TypeLoc wrappers.
-///
-/// \param T the type that will be the basis for type source info. This type
-/// should refer to how the declarator was written in source code, not to
-/// what type semantic analysis resolved the declarator to.
 TypeSourceInfo *ASTContext::CreateTypeSourceInfo(QualType T,
                                                  unsigned DataSize) const {
   if (!DataSize)
@@ -3813,7 +3805,7 @@ QualType ASTContext::getCFConstantStringType() const {
                                            FieldTypes[i], /*TInfo=*/0,
                                            /*BitWidth=*/0,
                                            /*Mutable=*/false,
-                                           /*HasInit=*/false);
+                                           ICIS_NoInit);
       Field->setAccess(AS_public);
       CFConstantStringTypeDecl->addDecl(Field);
     }
@@ -3857,7 +3849,7 @@ QualType ASTContext::getBlockDescriptorType() const {
                                          FieldTypes[i], /*TInfo=*/0,
                                          /*BitWidth=*/0,
                                          /*Mutable=*/false,
-                                         /*HasInit=*/false);
+                                         ICIS_NoInit);
     Field->setAccess(AS_public);
     T->addDecl(Field);
   }
@@ -3900,7 +3892,7 @@ QualType ASTContext::getBlockDescriptorExtendedType() const {
                                          FieldTypes[i], /*TInfo=*/0,
                                          /*BitWidth=*/0,
                                          /*Mutable=*/false,
-                                         /*HasInit=*/false);
+                                         ICIS_NoInit);
     Field->setAccess(AS_public);
     T->addDecl(Field);
   }
@@ -3976,7 +3968,7 @@ ASTContext::BuildByRefType(StringRef DeclName, QualType Ty) const {
                                          &Idents.get(FieldNames[i]),
                                          FieldTypes[i], /*TInfo=*/0,
                                          /*BitWidth=*/0, /*Mutable=*/false,
-                                         /*HasInit=*/false);
+                                         ICIS_NoInit);
     Field->setAccess(AS_public);
     T->addDecl(Field);
   }
