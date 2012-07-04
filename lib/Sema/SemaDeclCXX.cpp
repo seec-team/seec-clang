@@ -1119,6 +1119,8 @@ Sema::ActOnBaseSpecifier(Decl *classdecl, SourceRange SpecifierRange,
                                                       Virtual, Access, TInfo,
                                                       EllipsisLoc))
     return BaseSpec;
+  else
+    Class->setInvalidDecl();
 
   return true;
 }
@@ -9028,13 +9030,6 @@ Sema::BuildCXXConstructExpr(SourceLocation ConstructLoc, QualType DeclInitType,
   unsigned NumExprs = ExprArgs.size();
   Expr **Exprs = (Expr **)ExprArgs.release();
 
-  for (specific_attr_iterator<NonNullAttr>
-           i = Constructor->specific_attr_begin<NonNullAttr>(),
-           e = Constructor->specific_attr_end<NonNullAttr>(); i != e; ++i) {
-    const NonNullAttr *NonNull = *i;
-    CheckNonNullArguments(NonNull, ExprArgs.get(), ConstructLoc);
-  }
-
   MarkFunctionReferenced(ConstructLoc, Constructor);
   return Owned(CXXConstructExpr::Create(Context, DeclInitType, ConstructLoc,
                                         Constructor, Elidable, Exprs, NumExprs,
@@ -9100,7 +9095,7 @@ void Sema::FinalizeVarWithDestructor(VarDecl *VD, const RecordType *Record) {
 bool 
 Sema::CompleteConstructorCall(CXXConstructorDecl *Constructor,
                               MultiExprArg ArgsPtr,
-                              SourceLocation Loc,                                    
+                              SourceLocation Loc,
                               ASTOwningVector<Expr*> &ConvertedArgs,
                               bool AllowExplicit) {
   // FIXME: This duplicates a lot of code from Sema::ConvertArgumentsForCall.
@@ -9128,7 +9123,8 @@ Sema::CompleteConstructorCall(CXXConstructorDecl *Constructor,
 
   DiagnoseSentinelCalls(Constructor, Loc, AllArgs.data(), AllArgs.size());
 
-  // FIXME: Missing call to CheckFunctionCall or equivalent
+  CheckConstructorCall(Constructor, AllArgs.data(), AllArgs.size(),
+                       Proto, Loc);
 
   return Invalid;
 }
@@ -9626,7 +9622,8 @@ VarDecl *Sema::BuildExceptionDeclaration(Scope *S,
       Diag(Loc, diag::err_objc_object_catch);
       Invalid = true;
     } else if (T->isObjCObjectPointerType()) {
-      if (!getLangOpts().ObjCNonFragileABI)
+      // FIXME: should this be a test for macosx-fragile specifically?
+      if (getLangOpts().ObjCRuntime.isFragile())
         Diag(Loc, diag::warn_objc_pointer_cxx_catch_fragile);
     }
   }
@@ -10321,8 +10318,13 @@ void Sema::SetDeclDeleted(Decl *Dcl, SourceLocation DelLoc) {
     return;
   }
   if (const FunctionDecl *Prev = Fn->getPreviousDecl()) {
-    Diag(DelLoc, diag::err_deleted_decl_not_first);
-    Diag(Prev->getLocation(), diag::note_previous_declaration);
+    // Don't consider the implicit declaration we generate for explicit
+    // specializations. FIXME: Do not generate these implicit declarations.
+    if ((Prev->getTemplateSpecializationKind() != TSK_ExplicitSpecialization
+        || Prev->getPreviousDecl()) && !Prev->isDefined()) {
+      Diag(DelLoc, diag::err_deleted_decl_not_first);
+      Diag(Prev->getLocation(), diag::note_previous_declaration);
+    }
     // If the declaration wasn't the first, we delete the function anyway for
     // recovery.
   }

@@ -168,6 +168,7 @@ namespace clang {
 namespace sema {
   class AccessedEntity;
   class BlockScopeInfo;
+  class CapturingScopeInfo;
   class CompoundScopeInfo;
   class DelayedDiagnostic;
   class DelayedDiagnosticPool;
@@ -849,6 +850,8 @@ public:
   /// WeakTopLevelDeclDecls - access to \#pragma weak-generated Decls
   SmallVector<Decl*,2> &WeakTopLevelDecls() { return WeakTopLevelDecl; }
 
+  void ActOnComment(SourceRange Comment);
+
   //===--------------------------------------------------------------------===//
   // Type Analysis / Processing: SemaType.cpp.
   //
@@ -1314,7 +1317,11 @@ public:
   void CheckForFunctionRedefinition(FunctionDecl *FD);
   Decl *ActOnStartOfFunctionDef(Scope *S, Declarator &D);
   Decl *ActOnStartOfFunctionDef(Scope *S, Decl *D);
-  void ActOnStartOfObjCMethodDef(Scope *S, Decl *D);
+  void ActOnStartOfObjCMethodOrCFunctionDef(Scope *S, Decl *D, 
+                                            bool parseMethod);
+  bool isObjCMethodDecl(Decl *D) {
+    return D && isa<ObjCMethodDecl>(D);
+  }
 
   void computeNRVO(Stmt *Body, sema::FunctionScopeInfo *Scope);
   Decl *ActOnFinishFunctionBody(Decl *Decl, Stmt *Body);
@@ -2205,8 +2212,6 @@ public:
 
   /// CheckProtocolMethodDefs - This routine checks unimplemented
   /// methods declared in protocol, and those referenced by it.
-  /// \param IDecl - Used for checking for methods which may have been
-  /// inherited.
   void CheckProtocolMethodDefs(SourceLocation ImpLoc,
                                ObjCProtocolDecl *PDecl,
                                bool& IncompleteImpl,
@@ -2488,12 +2493,14 @@ public:
                           FullExprArg Third,
                           SourceLocation RParenLoc,
                           Stmt *Body);
-  ExprResult ActOnObjCForCollectionOperand(SourceLocation forLoc,
+  ExprResult CheckObjCForCollectionOperand(SourceLocation forLoc,
                                            Expr *collection);
   StmtResult ActOnObjCForCollectionStmt(SourceLocation ForColLoc,
                                         SourceLocation LParenLoc,
-                                        Stmt *First, Expr *Second,
-                                        SourceLocation RParenLoc, Stmt *Body);
+                                        Stmt *First, Expr *collection,
+                                        SourceLocation RParenLoc);
+  StmtResult FinishObjCForCollectionStmt(Stmt *ForCollection, Stmt *Body);
+  
   StmtResult ActOnCXXForRangeStmt(SourceLocation ForLoc,
                                   SourceLocation LParenLoc, Stmt *LoopVar,
                                   SourceLocation ColonLoc, Expr *Collection,
@@ -4016,6 +4023,10 @@ public:
   
   /// \brief Introduce the lambda parameters into scope.
   void addLambdaParameters(CXXMethodDecl *CallOperator, Scope *CurScope);
+
+  /// \brief Deduce a block or lambda's return type based on the return
+  /// statements present in the body.
+  void deduceClosureReturnType(sema::CapturingScopeInfo &CSI);
   
   /// ActOnStartOfLambdaDefinition - This is called just before we start
   /// parsing the body of a lambda; it analyzes the explicit captures and 
@@ -6004,19 +6015,21 @@ public:
   /// be modified to be consistent with \arg PropertyTy.
   void CheckObjCPropertyAttributes(Decl *PropertyPtrTy,
                                    SourceLocation Loc,
-                                   unsigned &Attributes);
+                                   unsigned &Attributes,
+                                   bool propertyInPrimaryClass);
 
   /// Process the specified property declaration and create decls for the
   /// setters and getters as needed.
   /// \param property The property declaration being processed
-  /// \param DC The semantic container for the property
+  /// \param CD The semantic container for the property
   /// \param redeclaredProperty Declaration for property if redeclared
   ///        in class extension.
   /// \param lexicalDC Container for redeclaredProperty.
   void ProcessPropertyDecl(ObjCPropertyDecl *property,
-                           ObjCContainerDecl *DC,
+                           ObjCContainerDecl *CD,
                            ObjCPropertyDecl *redeclaredProperty = 0,
                            ObjCContainerDecl *lexicalDC = 0);
+
 
   void DiagnosePropertyMismatch(ObjCPropertyDecl *Property,
                                 ObjCPropertyDecl *SuperProperty,
@@ -6338,8 +6351,10 @@ public:
   void AddCFAuditedAttribute(Decl *D);
 
   /// AddAlignedAttr - Adds an aligned attribute to a particular declaration.
-  void AddAlignedAttr(SourceRange AttrRange, Decl *D, Expr *E);
-  void AddAlignedAttr(SourceRange AttrRange, Decl *D, TypeSourceInfo *T);
+  void AddAlignedAttr(SourceRange AttrRange, Decl *D, Expr *E, 
+                      bool isDeclSpec);
+  void AddAlignedAttr(SourceRange AttrRange, Decl *D, TypeSourceInfo *T, 
+                      bool isDeclSpec);
 
   /// \brief The kind of conversion being performed.
   enum CheckedConversionKind {
@@ -6404,6 +6419,21 @@ public:
     VariadicDoesNotApply
   };
 
+  VariadicCallType getVariadicCallType(FunctionDecl *FDecl,
+                                       const FunctionProtoType *Proto,
+                                       Expr *Fn);
+
+  // Used for determining in which context a type is allowed to be passed to a
+  // vararg function.
+  enum VarArgKind {
+    VAK_Valid,
+    VAK_ValidInCXX11,
+    VAK_Invalid
+  };
+
+  // Determines which VarArgKind fits an expression.
+  VarArgKind isValidVarArgType(const QualType &Ty);
+
   /// GatherArgumentsForCall - Collector argument expressions for various
   /// form of call prototypes.
   bool GatherArgumentsForCall(SourceLocation CallLoc,
@@ -6416,9 +6446,13 @@ public:
                               bool AllowExplicit = false);
 
   // DefaultVariadicArgumentPromotion - Like DefaultArgumentPromotion, but
-  // will warn if the resulting type is not a POD type.
+  // will return ExprError() if the resulting type is not a POD type.
   ExprResult DefaultVariadicArgumentPromotion(Expr *E, VariadicCallType CT,
                                               FunctionDecl *FDecl);
+
+  /// Checks to see if the given expression is a valid argument to a variadic
+  /// function, issuing a diagnostic and returning NULL if not.
+  bool variadicArgumentPODCheck(const Expr *E, VariadicCallType CT);
 
   // UsualArithmeticConversions - performs the UsualUnaryConversions on it's
   // operands and then handles various conversions that are common to binary
@@ -6994,10 +7028,33 @@ private:
                         const ArraySubscriptExpr *ASE=0,
                         bool AllowOnePastEnd=true, bool IndexNegated=false);
   void CheckArrayAccess(const Expr *E);
-  bool CheckFunctionCall(FunctionDecl *FDecl, CallExpr *TheCall);
+  // Used to grab the relevant information from a FormatAttr and a
+  // FunctionDeclaration.
+  struct FormatStringInfo {
+    unsigned FormatIdx;
+    unsigned FirstDataArg;
+    bool HasVAListArg;
+  };
+
+  bool getFormatStringInfo(const FormatAttr *Format, bool IsCXXMember,
+                           FormatStringInfo *FSI);
+  bool CheckFunctionCall(FunctionDecl *FDecl, CallExpr *TheCall,
+                         const FunctionProtoType *Proto);
   bool CheckObjCMethodCall(ObjCMethodDecl *Method, SourceLocation loc, 
                            Expr **Args, unsigned NumArgs);
-  bool CheckBlockCall(NamedDecl *NDecl, CallExpr *TheCall);
+  bool CheckBlockCall(NamedDecl *NDecl, CallExpr *TheCall,
+                      const FunctionProtoType *Proto);
+  void CheckConstructorCall(FunctionDecl *FDecl,
+                            Expr **Args,
+                            unsigned NumArgs,
+                            const FunctionProtoType *Proto,
+                            SourceLocation Loc);
+
+  void checkCall(NamedDecl *FDecl, Expr **Args, unsigned NumArgs,
+                 unsigned NumProtoArgs, bool IsMemberFunction,
+                 SourceLocation Loc, SourceRange Range,
+                 VariadicCallType CallType);
+
 
   bool CheckObjCString(Expr *Arg);
 
@@ -7032,21 +7089,31 @@ private:
     FST_Unknown
   };
   static FormatStringType GetFormatStringType(const FormatAttr *Format);
-  bool SemaCheckStringLiteral(const Expr *E, Expr **Args, unsigned NumArgs,
-                              bool HasVAListArg, unsigned format_idx,
-                              unsigned firstDataArg, FormatStringType Type,
-                              bool inFunctionCall = true);
+
+  enum StringLiteralCheckType {
+    SLCT_NotALiteral,
+    SLCT_UncheckedLiteral,
+    SLCT_CheckedLiteral
+  };
+
+  StringLiteralCheckType checkFormatStringExpr(const Expr *E,
+                                               Expr **Args, unsigned NumArgs,
+                                               bool HasVAListArg,
+                                               unsigned format_idx,
+                                               unsigned firstDataArg,
+                                               FormatStringType Type,
+                                               bool inFunctionCall = true);
 
   void CheckFormatString(const StringLiteral *FExpr, const Expr *OrigFormatExpr,
                          Expr **Args, unsigned NumArgs, bool HasVAListArg,
                          unsigned format_idx, unsigned firstDataArg,
                          FormatStringType Type, bool inFunctionCall);
 
-  void CheckFormatArguments(const FormatAttr *Format, CallExpr *TheCall);
-  void CheckFormatArguments(const FormatAttr *Format, Expr **Args,
+  bool CheckFormatArguments(const FormatAttr *Format, CallExpr *TheCall);
+  bool CheckFormatArguments(const FormatAttr *Format, Expr **Args,
                             unsigned NumArgs, bool IsCXXMember,
                             SourceLocation Loc, SourceRange Range);
-  void CheckFormatArguments(Expr **Args, unsigned NumArgs,
+  bool CheckFormatArguments(Expr **Args, unsigned NumArgs,
                             bool HasVAListArg, unsigned format_idx,
                             unsigned firstDataArg, FormatStringType Type,
                             SourceLocation Loc, SourceRange range);

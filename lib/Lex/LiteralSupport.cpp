@@ -789,6 +789,7 @@ NumericLiteralParser::GetFloatValue(llvm::APFloat &Result) {
 }
 
 
+/// \verbatim
 ///       user-defined-character-literal: [C++11 lex.ext]
 ///         character-literal ud-suffix
 ///       ud-suffix:
@@ -824,6 +825,7 @@ NumericLiteralParser::GetFloatValue(llvm::APFloat &Result) {
 ///         \U hex-quad hex-quad
 ///       hex-quad:
 ///         hex-digit hex-digit hex-digit hex-digit
+/// \endverbatim
 ///
 CharLiteralParser::CharLiteralParser(const char *begin, const char *end,
                                      SourceLocation Loc, Preprocessor &PP,
@@ -1004,7 +1006,7 @@ CharLiteralParser::CharLiteralParser(const char *begin, const char *end,
     Value = (signed char)Value;
 }
 
-
+/// \verbatim
 ///       string-literal: [C++0x lex.string]
 ///         encoding-prefix " [s-char-sequence] "
 ///         encoding-prefix R raw-string
@@ -1056,6 +1058,7 @@ CharLiteralParser::CharLiteralParser(const char *begin, const char *end,
 ///         \U hex-quad hex-quad
 ///       hex-quad:
 ///         hex-digit hex-digit hex-digit hex-digit
+/// \endverbatim
 ///
 StringLiteralParser::
 StringLiteralParser(const Token *StringToks, unsigned NumStringToks,
@@ -1327,45 +1330,10 @@ void StringLiteralParser::init(const Token *StringToks, unsigned NumStringToks){
   }
 }
 
-
 /// copyStringFragment - This function copies from Start to End into ResultPtr.
 /// Performs widening for multi-byte characters.
 bool StringLiteralParser::CopyStringFragment(StringRef Fragment) {
-  assert(CharByteWidth==1 || CharByteWidth==2 || CharByteWidth==4);
-  ConversionResult result = conversionOK;
-  // Copy the character span over.
-  if (CharByteWidth == 1) {
-    if (!isLegalUTF8String(reinterpret_cast<const UTF8*>(Fragment.begin()),
-                           reinterpret_cast<const UTF8*>(Fragment.end())))
-      result = sourceIllegal;
-    memcpy(ResultPtr, Fragment.data(), Fragment.size());
-    ResultPtr += Fragment.size();
-  } else if (CharByteWidth == 2) {
-    UTF8 const *sourceStart = (UTF8 const *)Fragment.data();
-    // FIXME: Make the type of the result buffer correct instead of
-    // using reinterpret_cast.
-    UTF16 *targetStart = reinterpret_cast<UTF16*>(ResultPtr);
-    ConversionFlags flags = strictConversion;
-    result = ConvertUTF8toUTF16(
-	    &sourceStart,sourceStart + Fragment.size(),
-        &targetStart,targetStart + 2*Fragment.size(),flags);
-    if (result==conversionOK)
-      ResultPtr = reinterpret_cast<char*>(targetStart);
-  } else if (CharByteWidth == 4) {
-    UTF8 const *sourceStart = (UTF8 const *)Fragment.data();
-    // FIXME: Make the type of the result buffer correct instead of
-    // using reinterpret_cast.
-    UTF32 *targetStart = reinterpret_cast<UTF32*>(ResultPtr);
-    ConversionFlags flags = strictConversion;
-    result = ConvertUTF8toUTF32(
-        &sourceStart,sourceStart + Fragment.size(),
-        &targetStart,targetStart + 4*Fragment.size(),flags);
-    if (result==conversionOK)
-      ResultPtr = reinterpret_cast<char*>(targetStart);
-  }
-  assert((result != targetExhausted)
-         && "ConvertUTF8toUTFXX exhausted target buffer");
-  return result != conversionOK;
+  return !ConvertUTF8toWide(CharByteWidth, Fragment, ResultPtr);
 }
 
 bool StringLiteralParser::DiagnoseBadString(const Token &Tok) {

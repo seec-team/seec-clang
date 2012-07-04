@@ -643,6 +643,9 @@ void StmtPrinter::VisitPredefinedExpr(PredefinedExpr *Node) {
     case PredefinedExpr::Function:
       OS << "__FUNCTION__";
       break;
+    case PredefinedExpr::LFunction:
+      OS << "L__FUNCTION__";
+      break;
     case PredefinedExpr::PrettyFunction:
       OS << "__PRETTY_FUNCTION__";
       break;
@@ -811,7 +814,12 @@ void StmtPrinter::VisitUnaryExprOrTypeTraitExpr(UnaryExprOrTypeTraitExpr *Node){
     OS << "sizeof";
     break;
   case UETT_AlignOf:
-    OS << "__alignof";
+    if (Policy.LangOpts.CPlusPlus)
+      OS << "alignof";
+    else if (Policy.LangOpts.C11)
+      OS << "_Alignof";
+    else
+      OS << "__alignof";
     break;
   case UETT_VecStep:
     OS << "vec_step";

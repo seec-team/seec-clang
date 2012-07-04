@@ -6,9 +6,11 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-
-// \file
-// \brief Implements semantic analysis for C++ expressions.
+///
+/// \file
+/// \brief Implements semantic analysis for C++ expressions.
+///
+//===----------------------------------------------------------------------===//
 
 #include "clang/Sema/SemaInternal.h"
 #include "clang/Sema/DeclSpec.h"
@@ -374,6 +376,12 @@ Sema::ActOnCXXTypeid(SourceLocation OpLoc, SourceLocation LParenLoc,
     LookupResult R(*this, TypeInfoII, SourceLocation(), LookupTagName);
     LookupQualifiedName(R, getStdNamespace());
     CXXTypeInfoDecl = R.getAsSingle<RecordDecl>();
+    // Microsoft's typeinfo doesn't have type_info in std but in the global
+    // namespace if _HAS_EXCEPTIONS is defined to 0. See PR13153.
+    if (!CXXTypeInfoDecl && LangOpts.MicrosoftMode) {
+      LookupQualifiedName(R, Context.getTranslationUnitDecl());
+      CXXTypeInfoDecl = R.getAsSingle<RecordDecl>();
+    }
     if (!CXXTypeInfoDecl)
       return ExprError(Diag(OpLoc, diag::err_need_header_before_typeid));
   }
@@ -3327,6 +3335,25 @@ ExprResult Sema::ActOnBinaryTypeTrait(BinaryTypeTrait BTT,
   return BuildBinaryTypeTrait(BTT, KWLoc, LhsTSInfo, RhsTSInfo, RParen);
 }
 
+/// \brief Determine whether T has a non-trivial Objective-C lifetime in
+/// ARC mode.
+static bool hasNontrivialObjCLifetime(QualType T) {
+  switch (T.getObjCLifetime()) {
+  case Qualifiers::OCL_ExplicitNone:
+    return false;
+
+  case Qualifiers::OCL_Strong:
+  case Qualifiers::OCL_Weak:
+  case Qualifiers::OCL_Autoreleasing:
+    return true;
+
+  case Qualifiers::OCL_None:
+    return T->isObjCLifetimeType();
+  }
+
+  llvm_unreachable("Unknown ObjC lifetime qualifier");
+}
+
 static bool evaluateTypeTrait(Sema &S, TypeTrait Kind, SourceLocation KWLoc,
                               ArrayRef<TypeSourceInfo *> Args,
                               SourceLocation RParenLoc) {
@@ -3400,8 +3427,14 @@ static bool evaluateTypeTrait(Sema &S, TypeTrait Kind, SourceLocation KWLoc,
                                                   ArgExprs.size()));
     if (Result.isInvalid() || SFINAE.hasErrorOccurred())
       return false;
-    
-    // The initialization succeeded; not make sure there are no non-trivial 
+
+    // Under Objective-C ARC, if the destination has non-trivial Objective-C
+    // lifetime, this is a non-trivial construction.
+    if (S.getLangOpts().ObjCAutoRefCount &&
+        hasNontrivialObjCLifetime(Args[0]->getType().getNonReferenceType()))
+      return false;
+
+    // The initialization succeeded; now make sure there are no non-trivial
     // calls.
     return !Result.get()->hasNonTrivialCall(S.Context);
   }
@@ -3580,6 +3613,12 @@ static bool EvaluateBinaryTypeTrait(Sema &Self, BinaryTypeTrait BTT,
     Sema::ContextRAII TUContext(Self, Self.Context.getTranslationUnitDecl());
     ExprResult Result = Self.BuildBinOp(/*S=*/0, KeyLoc, BO_Assign, &Lhs, &Rhs);
     if (Result.isInvalid() || SFINAE.hasErrorOccurred())
+      return false;
+
+    // Under Objective-C ARC, if the destination has non-trivial Objective-C
+    // lifetime, this is a non-trivial assignment.
+    if (Self.getLangOpts().ObjCAutoRefCount &&
+        hasNontrivialObjCLifetime(LhsT.getNonReferenceType()))
       return false;
 
     return !Result.get()->hasNonTrivialCall(Self.Context);

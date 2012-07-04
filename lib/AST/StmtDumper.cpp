@@ -424,6 +424,7 @@ void StmtDumper::VisitPredefinedExpr(PredefinedExpr *Node) {
   default: llvm_unreachable("unknown case");
   case PredefinedExpr::Func:           OS <<  " __func__"; break;
   case PredefinedExpr::Function:       OS <<  " __FUNCTION__"; break;
+  case PredefinedExpr::LFunction:       OS <<  " L__FUNCTION__"; break;
   case PredefinedExpr::PrettyFunction: OS <<  " __PRETTY_FUNCTION__";break;
   }
 }
@@ -462,7 +463,7 @@ void StmtDumper::VisitUnaryExprOrTypeTraitExpr(UnaryExprOrTypeTraitExpr *Node) {
     OS << " sizeof ";
     break;
   case UETT_AlignOf:
-    OS << " __alignof ";
+    OS << " alignof ";
     break;
   case UETT_VecStep:
     OS << " vec_step ";

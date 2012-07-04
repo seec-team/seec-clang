@@ -1283,7 +1283,13 @@ DEF_TRAVERSE_DECL(FriendTemplateDecl, {
   })
 
 DEF_TRAVERSE_DECL(ClassScopeFunctionSpecializationDecl, {
-  TRY_TO(TraverseDecl(D->getSpecialization()));
+    TRY_TO(TraverseDecl(D->getSpecialization()));
+
+    if (D->hasExplicitTemplateArgs()) {
+      const TemplateArgumentListInfo& args = D->templateArgs();
+      TRY_TO(TraverseTemplateArgumentLocsHelper(
+          args.getArgumentArray(), args.size()));
+    }
  })
 
 DEF_TRAVERSE_DECL(LinkageSpecDecl, { })
@@ -1756,7 +1762,7 @@ bool RecursiveASTVisitor<Derived>::TraverseVarHelper(VarDecl *D) {
   TRY_TO(TraverseDeclaratorHelper(D));
   // Default params are taken care of when we traverse the ParmVarDecl.
   if (!isa<ParmVarDecl>(D) &&
-      (!D->isCXXForRangeDecl() || shouldVisitImplicitCode()))
+      (!D->isCXXForRangeDecl() || getDerived().shouldVisitImplicitCode()))
     TRY_TO(TraverseStmt(D->getInit()));
   return true;
 }
@@ -1875,9 +1881,10 @@ DEF_TRAVERSE_STMT(ObjCAtTryStmt, { })
 DEF_TRAVERSE_STMT(ObjCForCollectionStmt, { })
 DEF_TRAVERSE_STMT(ObjCAutoreleasePoolStmt, { })
 DEF_TRAVERSE_STMT(CXXForRangeStmt, {
-  if (!shouldVisitImplicitCode()) {
+  if (!getDerived().shouldVisitImplicitCode()) {
     TRY_TO(TraverseStmt(S->getLoopVarStmt()));
     TRY_TO(TraverseStmt(S->getRangeInit()));
+    TRY_TO(TraverseStmt(S->getBody()));
     // Visit everything else only if shouldVisitImplicitCode().
     return true;
   }

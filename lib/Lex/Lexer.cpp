@@ -820,10 +820,6 @@ static CharSourceRange makeRangeFromFileLocs(CharSourceRange Range,
   return CharSourceRange::getCharRange(Begin, End);
 }
 
-/// \brief Accepts a range and returns a character range with file locations.
-///
-/// Returns a null range if a part of the range resides inside a macro
-/// expansion or the range does not reside on the same FileID.
 CharSourceRange Lexer::makeFileCharRange(CharSourceRange Range,
                                          const SourceManager &SM,
                                          const LangOptions &LangOpts) {
@@ -1653,7 +1649,7 @@ void Lexer::LexStringLiteral(Token &Result, const char *CurPtr,
     if (C == '\n' || C == '\r' ||             // Newline.
         (C == 0 && CurPtr-1 == BufferEnd)) {  // End of file.
       if (!isLexingRawMode() && !LangOpts.AsmPreprocessor)
-        Diag(BufferPtr, diag::warn_unterminated_string);
+        Diag(BufferPtr, diag::ext_unterminated_string);
       FormTokenWithChars(Result, CurPtr-1, tok::unknown);
       return;
     }
@@ -1811,7 +1807,7 @@ void Lexer::LexCharConstant(Token &Result, const char *CurPtr,
   char C = getAndAdvanceChar(CurPtr, Result);
   if (C == '\'') {
     if (!isLexingRawMode() && !LangOpts.AsmPreprocessor)
-      Diag(BufferPtr, diag::err_empty_character);
+      Diag(BufferPtr, diag::ext_empty_character);
     FormTokenWithChars(Result, CurPtr, tok::unknown);
     return;
   }
@@ -1825,7 +1821,7 @@ void Lexer::LexCharConstant(Token &Result, const char *CurPtr,
     } else if (C == '\n' || C == '\r' ||             // Newline.
                (C == 0 && CurPtr-1 == BufferEnd)) {  // End of file.
       if (!isLexingRawMode() && !LangOpts.AsmPreprocessor)
-        Diag(BufferPtr, diag::warn_unterminated_char);
+        Diag(BufferPtr, diag::ext_unterminated_char);
       FormTokenWithChars(Result, CurPtr-1, tok::unknown);
       return;
     } else if (C == 0) {
@@ -2128,12 +2124,12 @@ static bool isEndOfBlockCommentWithEscapedNewLine(const char *CurPtr,
 #undef bool
 #endif
 
-/// SkipBlockComment - We have just read the /* characters from input.  Read
-/// until we find the */ characters that terminate the comment.  Note that we
-/// don't bother decoding trigraphs or escaped newlines in block comments,
-/// because they cannot cause the comment to end.  The only thing that can
-/// happen is the comment could end with an escaped newline between the */ end
-/// of comment.
+/// We have just read from input the / and * characters that started a comment.
+/// Read until we find the * and / characters that terminate the comment.
+/// Note that we don't bother decoding trigraphs or escaped newlines in block
+/// comments, because they cannot cause the comment to end.  The only thing
+/// that can happen is the comment could end with an escaped newline between
+/// the terminating * and /.
 ///
 /// If we're in KeepCommentMode or any CommentHandler has inserted
 /// some tokens, this will store the first token and return true.
@@ -2437,7 +2433,7 @@ unsigned Lexer::isNextPPTokenLParen() {
   return Tok.is(tok::l_paren);
 }
 
-/// FindConflictEnd - Find the end of a version control conflict marker.
+/// \brief Find the end of a version control conflict marker.
 static const char *FindConflictEnd(const char *CurPtr, const char *BufferEnd,
                                    ConflictMarkerKind CMK) {
   const char *Terminator = CMK == CMK_Perforce ? "<<<<\n" : ">>>>>>>";

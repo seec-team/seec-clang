@@ -6,9 +6,10 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
-//
-//  This file defines the MacroBuilder utility class.
-//
+///
+/// \file
+/// \brief Defines the clang::MacroBuilder utility class.
+///
 //===----------------------------------------------------------------------===//
 
 #ifndef LLVM_CLANG_BASIC_MACROBUILDER_H
@@ -29,8 +30,8 @@ public:
     Out << "#define " << Name << ' ' << Value << '\n';
   }
 
-  /// Append a #undef line for Name.  Name should be of the form XXX
-  /// and we emit "#undef XXX".
+  /// Append a \#undef line for Name.  Name should be of the form XXX
+  /// and we emit "\#undef XXX".
   void undefineMacro(const Twine &Name) {
     Out << "#undef " << Name << '\n';
   }

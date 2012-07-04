@@ -1259,6 +1259,12 @@ StmtResult Parser::ParseDoStatement() {
   // Parse the parenthesized condition.
   BalancedDelimiterTracker T(*this, tok::l_paren);
   T.consumeOpen();
+  
+  // FIXME: Do not just parse the attribute contents and throw them away
+  ParsedAttributesWithRange attrs(AttrFactory);
+  MaybeParseCXX0XAttributes(attrs);
+  ProhibitAttributes(attrs);
+
   ExprResult Cond = ParseExpression();
   T.consumeClose();
   DoScope.Exit();
@@ -1347,8 +1353,12 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
     return StmtError();
   }
 
+  ParsedAttributesWithRange attrs(AttrFactory);
+  MaybeParseCXX0XAttributes(attrs);
+
   // Parse the first part of the for specifier.
   if (Tok.is(tok::semi)) {  // for (;
+    ProhibitAttributes(attrs);
     // no first part, eat the ';'.
     ConsumeToken();
   } else if (isForInitDeclaration()) {  // for (int X = 4;
@@ -1393,6 +1403,7 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
       Diag(Tok, diag::err_expected_semi_for);
     }
   } else {
+    ProhibitAttributes(attrs);
     Value = ParseExpression();
 
     ForEach = isTokIdentifier_in();
@@ -1480,6 +1491,8 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
   // statememt before parsing the body, in order to be able to deduce the type
   // of an auto-typed loop variable.
   StmtResult ForRangeStmt;
+  StmtResult ForEachStmt;
+  
   if (ForRange) {
     ForRangeStmt = Actions.ActOnCXXForRangeStmt(ForLoc, T.getOpenLocation(),
                                                 FirstPart.take(),
@@ -1491,9 +1504,10 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
   // Similarly, we need to do the semantic analysis for a for-range
   // statement immediately in order to close over temporaries correctly.
   } else if (ForEach) {
-    if (!Collection.isInvalid())
-      Collection =
-        Actions.ActOnObjCForCollectionOperand(ForLoc, Collection.take());
+    ForEachStmt = Actions.ActOnObjCForCollectionStmt(ForLoc, T.getOpenLocation(),
+                                                     FirstPart.take(),
+                                                     Collection.take(), 
+                                                     T.getCloseLocation());
   }
 
   // C99 6.8.5p5 - In C99, the body of the if statement is a scope, even if
@@ -1523,11 +1537,8 @@ StmtResult Parser::ParseForStatement(SourceLocation *TrailingElseLoc) {
     return StmtError();
 
   if (ForEach)
-   return Actions.ActOnObjCForCollectionStmt(ForLoc, T.getOpenLocation(),
-                                             FirstPart.take(),
-                                             Collection.take(), 
-                                             T.getCloseLocation(),
-                                             Body.take());
+   return Actions.FinishObjCForCollectionStmt(ForEachStmt.take(),
+                                              Body.take());
 
   if (ForRange)
     return Actions.FinishCXXForRangeStmt(ForRangeStmt.take(), Body.take());
