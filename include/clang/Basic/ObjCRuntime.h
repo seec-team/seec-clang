@@ -16,6 +16,7 @@
 #define LLVM_CLANG_OBJCRUNTIME_H
 
 #include "clang/Basic/VersionTuple.h"
+#include "llvm/ADT/Triple.h"
 #include "llvm/Support/ErrorHandling.h"
 
 namespace clang {
@@ -84,6 +85,21 @@ public:
   /// implied behaviors for a "fragile" ABI?
   bool isFragile() const { return !isNonFragile(); }
 
+  /// The default dispatch mechanism to use for the specified architecture
+  bool isLegacyDispatchDefaultForArch(llvm::Triple::ArchType Arch) {
+    // The GNUstep runtime uses a newer dispatch method by default from
+    // version 1.6 onwards
+    if (getKind() == GNUstep && getVersion() >= VersionTuple(1, 6)) {
+      if (Arch == llvm::Triple::arm ||
+          Arch == llvm::Triple::x86 ||
+          Arch == llvm::Triple::x86_64)
+        return false;
+      // Mac runtimes use legacy dispatch everywhere except x86-64
+    } else if (isNeXTFamily() && isNonFragile())
+        return Arch != llvm::Triple::x86_64;
+    return true;
+  }
+
   /// \brief Is this runtime basically of the GNUstep family of runtimes?
   bool isGNUFamily() const {
     switch (getKind()) {
@@ -116,11 +132,8 @@ public:
     case MacOSX: return getVersion() >= VersionTuple(10, 7);
     case iOS: return getVersion() >= VersionTuple(5);
 
-    // This is really a lie, because some implementations and versions
-    // of the runtime do not support ARC.  Probably -fgnu-runtime
-    // should imply a "maximal" runtime or something?
-    case GCC: return true;
-    case GNUstep: return true;
+    case GCC: return false;
+    case GNUstep: return getVersion() >= VersionTuple(1, 6);
     }
     llvm_unreachable("bad kind");
   }

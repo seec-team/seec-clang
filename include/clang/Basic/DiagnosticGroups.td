@@ -265,7 +265,6 @@ def AutomaticReferenceCounting : DiagGroup<"arc",
                                             ARCRetainCycles,
                                             ARCNonPodMemAccess]>;
 def Selector : DiagGroup<"selector">;
-def NonfragileAbi2 : DiagGroup<"nonfragile-abi2">;
 def Protocol : DiagGroup<"protocol">;
 def SuperSubClassMismatch : DiagGroup<"super-class-method-mismatch">;
 def OverridingMethodMismatch : DiagGroup<"overriding-method-mismatch">;
@@ -379,6 +378,9 @@ def ThreadSafety : DiagGroup<"thread-safety",
 // warning should be active _only_ when -Wall is passed in, mark it as
 // DefaultIgnore in addition to putting it here.
 def : DiagGroup<"all", [Most, Parentheses, Switch]>;
+
+// Warnings enabled by -pedantic.  This is magically filled in by TableGen.
+def Pedantic : DiagGroup<"pedantic">;
 
 // Aliases.
 def : DiagGroup<"", [Extra]>;                   // -W = -Wextra

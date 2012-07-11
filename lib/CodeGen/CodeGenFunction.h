@@ -855,8 +855,11 @@ public:
     /// cleanups.
     ~LexicalScope() {
       if (PopDebugStack) {
-        CGDebugInfo *DI = CGF.getDebugInfo();
-        if (DI) DI->EmitLexicalBlockEnd(CGF.Builder, Range.getEnd());
+        if (CGDebugInfo *DI = CGF.getDebugInfo()) {
+          if (RunCleanupsScope::requiresCleanups())
+            DI->EmitLocation(CGF.Builder, Range.getEnd());
+          DI->EmitLexicalBlockEnd(CGF.Builder, Range.getEnd());
+        }
       }
     }
 
@@ -865,6 +868,8 @@ public:
     void ForceCleanup() {
       RunCleanupsScope::ForceCleanup();
       if (CGDebugInfo *DI = CGF.getDebugInfo()) {
+        if (RunCleanupsScope::requiresCleanups())
+          DI->EmitLocation(CGF.Builder, Range.getEnd());
         DI->EmitLexicalBlockEnd(CGF.Builder, Range.getEnd());
         PopDebugStack = false;
       }
@@ -1197,6 +1202,16 @@ private:
   llvm::BasicBlock *TerminateLandingPad;
   llvm::BasicBlock *TerminateHandler;
   llvm::BasicBlock *TrapBB;
+
+  /// Add a kernel metadata node to the named metadata node 'opencl.kernels'.
+  /// In the kernel metadata node, reference the kernel function and metadata 
+  /// nodes for its optional attribute qualifiers (OpenCL 1.1 6.7.2):
+  /// - A node for the work_group_size_hint(X,Y,Z) qualifier contains string 
+  ///   "work_group_size_hint", and three 32-bit integers X, Y and Z.
+  /// - A node for the reqd_work_group_size(X,Y,Z) qualifier contains string 
+  ///   "reqd_work_group_size", and three 32-bit integers X, Y and Z.
+  void EmitOpenCLKernelMetadata(const FunctionDecl *FD, 
+                                llvm::Function *Fn);
 
 public:
   CodeGenFunction(CodeGenModule &cgm, bool suppressNewContext=false);

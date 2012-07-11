@@ -49,7 +49,7 @@ Parser::Parser(Preprocessor &pp, Sema &actions, bool SkipFunctionBodies)
   : PP(pp), Actions(actions), Diags(PP.getDiagnostics()),
     GreaterThanIsOperator(true), ColonIsSacred(false), 
     InMessageExpression(false), TemplateParameterDepth(0),
-    SkipFunctionBodies(SkipFunctionBodies) {
+    ParsingInObjCContainer(false), SkipFunctionBodies(SkipFunctionBodies) {
   Tok.setKind(tok::eof);
   Actions.CurScope = 0;
   NumCachedScopes = 0;
@@ -773,9 +773,7 @@ bool Parser::isDeclarationAfterDeclarator() {
     Tok.is(tok::kw_asm) ||          // int X() __asm__ -> not a function def
     Tok.is(tok::kw___attribute) ||  // int X() __attr__ -> not a function def
     (getLangOpts().CPlusPlus &&
-     Tok.is(tok::l_paren)) ||       // int X(0) -> not a function def [C++]
-    (CurParsedObjCImpl && 
-     Tok.is(tok::l_brace));        // C-function  nested in an @implementation
+     Tok.is(tok::l_paren));         // int X(0) -> not a function def [C++]
 }
 
 /// \brief Determine whether the current token, if it occurs after a
@@ -797,6 +795,27 @@ bool Parser::isStartOfFunctionDefinition(const ParsingDeclarator &Declarator) {
   
   return Tok.is(tok::colon) ||         // X() : Base() {} (used for ctors)
          Tok.is(tok::kw_try);          // X() try { ... }
+}
+
+/// \brief Determine whether the current token, if it occurs after a
+/// a function declarator, indicates the start of a function definition
+/// inside an objective-C class implementation and thus can be delay parsed. 
+bool Parser::isStartOfDelayParsedFunctionDefinition(
+                                       const ParsingDeclarator &Declarator) {
+  if (!CurParsedObjCImpl ||
+      !Declarator.isFunctionDeclarator())
+    return false;
+  if (Tok.is(tok::l_brace))   // int X() {}
+    return true;
+
+  // Handle K&R C argument lists: int X(f) int f; {}
+  if (!getLangOpts().CPlusPlus &&
+      Declarator.getFunctionTypeInfo().isKNRPrototype()) 
+    return isDeclarationSpecifier();
+  
+  return getLangOpts().CPlusPlus &&
+           (Tok.is(tok::colon) ||         // X() : Base() {} (used for ctors)
+            Tok.is(tok::kw_try));          // X() try { ... }
 }
 
 /// ParseDeclarationOrFunctionDefinition - Parse either a function-definition or

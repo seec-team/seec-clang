@@ -28,6 +28,7 @@
 #include "clang/AST/ExprObjC.h"
 #include "clang/AST/DeclarationName.h"
 #include "clang/AST/ExternalASTSource.h"
+#include "clang/AST/LambdaMangleContext.h"
 #include "clang/AST/TypeLoc.h"
 #include "clang/AST/NSAPI.h"
 #include "clang/Lex/ModuleLoader.h"
@@ -2466,7 +2467,8 @@ public:
   StmtResult ActOnLabelStmt(SourceLocation IdentLoc, LabelDecl *TheDecl,
                             SourceLocation ColonLoc, Stmt *SubStmt);
 
-  StmtResult ActOnAttributedStmt(SourceLocation AttrLoc, const AttrVec &Attrs,
+  StmtResult ActOnAttributedStmt(SourceLocation AttrLoc,
+                                 ArrayRef<const Attr*> Attrs,
                                  Stmt *SubStmt);
 
   StmtResult ActOnIfStmt(SourceLocation IfLoc,
@@ -3302,7 +3304,7 @@ public:
   public:
     explicit ImplicitExceptionSpecification(Sema &Self)
       : Self(&Self), ComputedEST(EST_BasicNoexcept) {
-      if (!Self.Context.getLangOpts().CPlusPlus0x)
+      if (!Self.getLangOpts().CPlusPlus0x)
         ComputedEST = EST_DynamicNone;
     }
 
@@ -7060,6 +7062,7 @@ private:
 
   ExprResult CheckBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall);
   bool CheckARMBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall);
+  bool CheckMipsBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall);
 
   bool SemaBuiltinVAStart(CallExpr *TheCall);
   bool SemaBuiltinUnorderedCompare(CallExpr *TheCall);

@@ -122,6 +122,7 @@ void Lexer::skipLineStartingDecorations() {
 }
 
 namespace {
+/// Returns pointer to the first newline character in the string.
 const char *findNewline(const char *BufferPtr, const char *BufferEnd) {
   for ( ; BufferPtr != BufferEnd; ++BufferPtr) {
     const char C = *BufferPtr;
@@ -144,6 +145,11 @@ const char *skipNewline(const char *BufferPtr, const char *BufferEnd) {
       BufferPtr++;
   }
   return BufferPtr;
+}
+
+bool isHTMLIdentifierStartingCharacter(char C) {
+  return (C >= 'a' && C <= 'z') ||
+         (C >= 'A' && C <= 'Z');
 }
 
 bool isHTMLIdentifierCharacter(char C) {
@@ -270,6 +276,9 @@ void Lexer::lexCommentText(Token &T) {
   case LS_HTMLOpenTag:
     lexHTMLOpenTag(T);
     return;
+  case LS_HTMLCloseTag:
+    lexHTMLCloseTag(T);
+    return;
   }
 
   assert(State == LS_Normal);
@@ -353,10 +362,10 @@ void Lexer::lexCommentText(Token &T) {
           return;
         }
         const char C = *TokenPtr;
-        if (isHTMLIdentifierCharacter(C))
+        if (isHTMLIdentifierStartingCharacter(C))
           setupAndLexHTMLOpenTag(T);
         else if (C == '/')
-          lexHTMLCloseTag(T);
+          setupAndLexHTMLCloseTag(T);
         else {
           StringRef Text(BufferPtr, TokenPtr - BufferPtr);
           formTokenWithChars(T, TokenPtr, tok::text);
@@ -379,7 +388,7 @@ void Lexer::lexCommentText(Token &T) {
           TokenPtr++;
           if (TokenPtr == CommentEnd)
             break;
-          char C = *TokenPtr;
+          const char C = *TokenPtr;
           if(C == '\n' || C == '\r' ||
              C == '\\' || C == '@' || C == '<')
             break;
@@ -404,6 +413,18 @@ void Lexer::setupAndLexVerbatimBlock(Token &T,
   formTokenWithChars(T, TextBegin, tok::verbatim_block_begin);
   T.setVerbatimBlockName(Name);
 
+  // If there is a newline following the verbatim opening command, skip the
+  // newline so that we don't create an tok::verbatim_block_line with empty
+  // text content.
+  if (BufferPtr != CommentEnd) {
+    const char C = *BufferPtr;
+    if (C == '\n' || C == '\r') {
+      BufferPtr = skipNewline(BufferPtr, CommentEnd);
+      State = LS_VerbatimBlockBody;
+      return;
+    }
+  }
+
   State = LS_VerbatimBlockFirstLine;
 }
 
@@ -419,9 +440,11 @@ void Lexer::lexVerbatimBlockFirstLine(Token &T) {
 
   // Look for end command in current line.
   size_t Pos = Line.find(VerbatimBlockEndCommandName);
+  const char *TextEnd;
   const char *NextLine;
   if (Pos == StringRef::npos) {
     // Current line is completely verbatim.
+    TextEnd = Newline;
     NextLine = skipNewline(Newline, CommentEnd);
   } else if (Pos == 0) {
     // Current line contains just an end command.
@@ -433,10 +456,11 @@ void Lexer::lexVerbatimBlockFirstLine(Token &T) {
     return;
   } else {
     // There is some text, followed by end command.  Extract text first.
-    NextLine = BufferPtr + Pos;
+    TextEnd = BufferPtr + Pos;
+    NextLine = TextEnd;
   }
 
-  StringRef Text(BufferPtr, NextLine - BufferPtr);
+  StringRef Text(BufferPtr, TextEnd - BufferPtr);
   formTokenWithChars(T, NextLine, tok::verbatim_block_line);
   T.setVerbatimBlockText(Text);
 
@@ -473,7 +497,8 @@ void Lexer::lexVerbatimLineText(Token &T) {
 }
 
 void Lexer::setupAndLexHTMLOpenTag(Token &T) {
-  assert(BufferPtr[0] == '<' && isHTMLIdentifierCharacter(BufferPtr[1]));
+  assert(BufferPtr[0] == '<' &&
+         isHTMLIdentifierStartingCharacter(BufferPtr[1]));
   const char *TagNameEnd = skipHTMLIdentifier(BufferPtr + 2, CommentEnd);
 
   StringRef Name(BufferPtr + 1, TagNameEnd - (BufferPtr + 1));
@@ -482,12 +507,9 @@ void Lexer::setupAndLexHTMLOpenTag(Token &T) {
 
   BufferPtr = skipWhitespace(BufferPtr, CommentEnd);
 
-  if (BufferPtr != CommentEnd && *BufferPtr == '>') {
-    BufferPtr++;
-    return;
-  }
-
-  if (BufferPtr != CommentEnd && isHTMLIdentifierCharacter(*BufferPtr))
+  const char C = *BufferPtr;
+  if (BufferPtr != CommentEnd &&
+      (C == '>' || isHTMLIdentifierStartingCharacter(C)))
     State = LS_HTMLOpenTag;
 }
 
@@ -522,7 +544,8 @@ void Lexer::lexHTMLOpenTag(Token &T) {
     case '>':
       TokenPtr++;
       formTokenWithChars(T, TokenPtr, tok::html_greater);
-      break;
+      State = LS_Normal;
+      return;
     }
   }
 
@@ -535,25 +558,33 @@ void Lexer::lexHTMLOpenTag(Token &T) {
   }
 
   C = *BufferPtr;
-  if (!isHTMLIdentifierCharacter(C) &&
+  if (!isHTMLIdentifierStartingCharacter(C) &&
       C != '=' && C != '\"' && C != '\'' && C != '>') {
     State = LS_Normal;
     return;
   }
 }
 
-void Lexer::lexHTMLCloseTag(Token &T) {
+void Lexer::setupAndLexHTMLCloseTag(Token &T) {
   assert(BufferPtr[0] == '<' && BufferPtr[1] == '/');
 
   const char *TagNameBegin = skipWhitespace(BufferPtr + 2, CommentEnd);
   const char *TagNameEnd = skipHTMLIdentifier(TagNameBegin, CommentEnd);
 
   const char *End = skipWhitespace(TagNameEnd, CommentEnd);
-  if (End != CommentEnd && *End == '>')
-    End++;
 
   formTokenWithChars(T, End, tok::html_tag_close);
   T.setHTMLTagCloseName(StringRef(TagNameBegin, TagNameEnd - TagNameBegin));
+
+  if (BufferPtr != CommentEnd && *BufferPtr == '>')
+    State = LS_HTMLCloseTag;
+}
+
+void Lexer::lexHTMLCloseTag(Token &T) {
+  assert(BufferPtr != CommentEnd && *BufferPtr == '>');
+
+  formTokenWithChars(T, BufferPtr + 1, tok::html_greater);
+  State = LS_Normal;
 }
 
 Lexer::Lexer(SourceLocation FileLoc, const CommentOptions &CommOpts,
@@ -595,7 +626,8 @@ again:
         BufferPtr++;
 
       CommentState = LCS_InsideBCPLComment;
-      State = LS_Normal;
+      if (State != LS_VerbatimBlockBody && State != LS_VerbatimBlockFirstLine)
+        State = LS_Normal;
       CommentEnd = findBCPLCommentEnd(BufferPtr, BufferEnd);
       goto again;
     }
@@ -628,8 +660,9 @@ again:
       EndWhitespace++;
 
     // Turn any whitespace between comments (and there is only whitespace
-    // between them) into a newline.  We have two newlines between comments
-    // in total (first one was synthesized after a comment).
+    // between them -- guaranteed by comment extraction) into a newline.  We
+    // have two newlines between C comments in total (first one was synthesized
+    // after a comment).
     formTokenWithChars(T, EndWhitespace, tok::newline);
 
     CommentState = LCS_BeforeComment;
