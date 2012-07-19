@@ -201,6 +201,10 @@ const char *skipWhitespace(const char *BufferPtr, const char *BufferEnd) {
   return BufferEnd;
 }
 
+bool isWhitespace(const char *BufferPtr, const char *BufferEnd) {
+  return skipWhitespace(BufferPtr, BufferEnd) == BufferEnd;
+}
+
 bool isCommandNameCharacter(char C) {
   return (C >= 'a' && C <= 'z') ||
          (C >= 'A' && C <= 'Z') ||
@@ -273,11 +277,11 @@ void Lexer::lexCommentText(Token &T) {
   case LS_VerbatimLineText:
     lexVerbatimLineText(T);
     return;
-  case LS_HTMLOpenTag:
-    lexHTMLOpenTag(T);
+  case LS_HTMLStartTag:
+    lexHTMLStartTag(T);
     return;
-  case LS_HTMLCloseTag:
-    lexHTMLCloseTag(T);
+  case LS_HTMLEndTag:
+    lexHTMLEndTag(T);
     return;
   }
 
@@ -363,9 +367,9 @@ void Lexer::lexCommentText(Token &T) {
         }
         const char C = *TokenPtr;
         if (isHTMLIdentifierStartingCharacter(C))
-          setupAndLexHTMLOpenTag(T);
+          setupAndLexHTMLStartTag(T);
         else if (C == '/')
-          setupAndLexHTMLCloseTag(T);
+          setupAndLexHTMLEndTag(T);
         else {
           StringRef Text(BufferPtr, TokenPtr - BufferPtr);
           formTokenWithChars(T, TokenPtr, tok::text);
@@ -429,6 +433,7 @@ void Lexer::setupAndLexVerbatimBlock(Token &T,
 }
 
 void Lexer::lexVerbatimBlockFirstLine(Token &T) {
+again:
   assert(BufferPtr < CommentEnd);
 
   // FIXME: It would be better to scan the text once, finding either the block
@@ -458,6 +463,11 @@ void Lexer::lexVerbatimBlockFirstLine(Token &T) {
     // There is some text, followed by end command.  Extract text first.
     TextEnd = BufferPtr + Pos;
     NextLine = TextEnd;
+    // If there is only whitespace before end command, skip whitespace.
+    if (isWhitespace(BufferPtr, TextEnd)) {
+      BufferPtr = TextEnd;
+      goto again;
+    }
   }
 
   StringRef Text(BufferPtr, TextEnd - BufferPtr);
@@ -496,25 +506,25 @@ void Lexer::lexVerbatimLineText(Token &T) {
   State = LS_Normal;
 }
 
-void Lexer::setupAndLexHTMLOpenTag(Token &T) {
+void Lexer::setupAndLexHTMLStartTag(Token &T) {
   assert(BufferPtr[0] == '<' &&
          isHTMLIdentifierStartingCharacter(BufferPtr[1]));
   const char *TagNameEnd = skipHTMLIdentifier(BufferPtr + 2, CommentEnd);
 
   StringRef Name(BufferPtr + 1, TagNameEnd - (BufferPtr + 1));
-  formTokenWithChars(T, TagNameEnd, tok::html_tag_open);
-  T.setHTMLTagOpenName(Name);
+  formTokenWithChars(T, TagNameEnd, tok::html_start_tag);
+  T.setHTMLTagStartName(Name);
 
   BufferPtr = skipWhitespace(BufferPtr, CommentEnd);
 
   const char C = *BufferPtr;
   if (BufferPtr != CommentEnd &&
-      (C == '>' || isHTMLIdentifierStartingCharacter(C)))
-    State = LS_HTMLOpenTag;
+      (C == '>' || C == '/' || isHTMLIdentifierStartingCharacter(C)))
+    State = LS_HTMLStartTag;
 }
 
-void Lexer::lexHTMLOpenTag(Token &T) {
-  assert(State == LS_HTMLOpenTag);
+void Lexer::lexHTMLStartTag(Token &T) {
+  assert(State == LS_HTMLStartTag);
 
   const char *TokenPtr = BufferPtr;
   char C = *TokenPtr;
@@ -546,6 +556,18 @@ void Lexer::lexHTMLOpenTag(Token &T) {
       formTokenWithChars(T, TokenPtr, tok::html_greater);
       State = LS_Normal;
       return;
+    case '/':
+      TokenPtr++;
+      if (TokenPtr != CommentEnd && *TokenPtr == '>') {
+        TokenPtr++;
+        formTokenWithChars(T, TokenPtr, tok::html_slash_greater);
+      } else {
+        StringRef Text(BufferPtr, TokenPtr - BufferPtr);
+        formTokenWithChars(T, TokenPtr, tok::text);
+        T.setText(Text);
+      }
+      State = LS_Normal;
+      return;
     }
   }
 
@@ -565,7 +587,7 @@ void Lexer::lexHTMLOpenTag(Token &T) {
   }
 }
 
-void Lexer::setupAndLexHTMLCloseTag(Token &T) {
+void Lexer::setupAndLexHTMLEndTag(Token &T) {
   assert(BufferPtr[0] == '<' && BufferPtr[1] == '/');
 
   const char *TagNameBegin = skipWhitespace(BufferPtr + 2, CommentEnd);
@@ -573,14 +595,14 @@ void Lexer::setupAndLexHTMLCloseTag(Token &T) {
 
   const char *End = skipWhitespace(TagNameEnd, CommentEnd);
 
-  formTokenWithChars(T, End, tok::html_tag_close);
-  T.setHTMLTagCloseName(StringRef(TagNameBegin, TagNameEnd - TagNameBegin));
+  formTokenWithChars(T, End, tok::html_end_tag);
+  T.setHTMLTagEndName(StringRef(TagNameBegin, TagNameEnd - TagNameBegin));
 
   if (BufferPtr != CommentEnd && *BufferPtr == '>')
-    State = LS_HTMLCloseTag;
+    State = LS_HTMLEndTag;
 }
 
-void Lexer::lexHTMLCloseTag(Token &T) {
+void Lexer::lexHTMLEndTag(Token &T) {
   assert(BufferPtr != CommentEnd && *BufferPtr == '>');
 
   formTokenWithChars(T, BufferPtr + 1, tok::html_greater);

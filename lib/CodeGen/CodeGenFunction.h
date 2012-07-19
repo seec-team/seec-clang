@@ -855,11 +855,8 @@ public:
     /// cleanups.
     ~LexicalScope() {
       if (PopDebugStack) {
-        if (CGDebugInfo *DI = CGF.getDebugInfo()) {
-          if (RunCleanupsScope::requiresCleanups())
-            DI->EmitLocation(CGF.Builder, Range.getEnd());
-          DI->EmitLexicalBlockEnd(CGF.Builder, Range.getEnd());
-        }
+        CGDebugInfo *DI = CGF.getDebugInfo();
+        if (DI) DI->EmitLexicalBlockEnd(CGF.Builder, Range.getEnd());
       }
     }
 
@@ -868,8 +865,6 @@ public:
     void ForceCleanup() {
       RunCleanupsScope::ForceCleanup();
       if (CGDebugInfo *DI = CGF.getDebugInfo()) {
-        if (RunCleanupsScope::requiresCleanups())
-          DI->EmitLocation(CGF.Builder, Range.getEnd());
         DI->EmitLexicalBlockEnd(CGF.Builder, Range.getEnd());
         PopDebugStack = false;
       }

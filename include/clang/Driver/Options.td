@@ -39,6 +39,7 @@ def clang_i_Group         : OptionGroup<"<clang i group>">, Group<i_Group>;
 def m_Group               : OptionGroup<"<m group>">, Group<CompileOnly_Group>;
 def m_x86_Features_Group  : OptionGroup<"<m x86 features group>">, Group<m_Group>;
 def m_hexagon_Features_Group  : OptionGroup<"<m hexagon features group>">, Group<m_Group>;
+def opencl_Group          : OptionGroup<"<opencl group>">;
 def u_Group               : OptionGroup<"<u group>">;
 
 def pedantic_Group        : OptionGroup<"<pedantic group>">,
@@ -247,6 +248,8 @@ def bind__at__load : Flag<"-bind_at_load">;
 def bundle__loader : Separate<"-bundle_loader">;
 def bundle : Flag<"-bundle">;
 def b : JoinedOrSeparate<"-b">, Flags<[Unsupported]>;
+def cl_kernel_arg_info : Flag<"-cl-kernel-arg-info">, Flags<[CC1Option]>, Group<opencl_Group>,
+HelpText<"OpenCL only. This option allows the compiler to store information about the arguments of a kernel(s)"> ;
 def client__name : JoinedOrSeparate<"-client_name">;
 def combine : Flag<"-combine">, Flags<[DriverOption, Unsupported]>;
 def compatibility__version : JoinedOrSeparate<"-compatibility_version">;
@@ -397,7 +400,7 @@ def fassociative_math : Flag<"-fassociative-math">, Group<f_Group>;
 def fno_associative_math : Flag<"-fno-associative-math">, Group<f_Group>;
 def freciprocal_math : Flag<"-freciprocal-math">, Group<f_Group>;
 def fno_reciprocal_math : Flag<"-fno-reciprocal-math">, Group<f_Group>;
-def ffinite_math_only : Flag<"-ffinite-math-only">, Group<f_Group>;
+def ffinite_math_only : Flag<"-ffinite-math-only">, Group<f_Group>, Flags<[CC1Option]>;
 def fno_finite_math_only : Flag<"-fno-finite-math-only">, Group<f_Group>;
 def fsigned_zeros : Flag<"-fsigned-zeros">, Group<f_Group>;
 def fno_signed_zeros : Flag<"-fno-signed-zeros">, Group<f_Group>;

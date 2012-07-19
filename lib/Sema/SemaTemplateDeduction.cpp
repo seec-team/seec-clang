@@ -2181,8 +2181,9 @@ Sema::DeduceTemplateArguments(ClassTemplatePartialSpecializationDecl *Partial,
                                     TemplateArgs, Info, Deduced))
     return Result;
 
+  SmallVector<TemplateArgument, 4> DeducedArgs(Deduced.begin(), Deduced.end());
   InstantiatingTemplate Inst(*this, Partial->getLocation(), Partial,
-                             Deduced.data(), Deduced.size(), Info);
+                             DeducedArgs, Info);
   if (Inst)
     return TDK_InstantiationDepth;
 
@@ -2266,8 +2267,9 @@ Sema::SubstituteExplicitTemplateArguments(
   // Enter a new template instantiation context where we check the
   // explicitly-specified template arguments against this function template,
   // and then substitute them into the function parameter types.
+  SmallVector<TemplateArgument, 4> DeducedArgs(Deduced.begin(), Deduced.end());
   InstantiatingTemplate Inst(*this, FunctionTemplate->getLocation(),
-                             FunctionTemplate, Deduced.data(), Deduced.size(),
+                             FunctionTemplate, DeducedArgs,
            ActiveTemplateInstantiation::ExplicitTemplateArgumentSubstitution,
                              Info);
   if (Inst)
@@ -2434,6 +2436,16 @@ CheckOriginalCallArgDeduction(Sema &S, Sema::OriginalCallArg OriginalArg,
     
     Qualifiers AQuals = A.getQualifiers();
     Qualifiers DeducedAQuals = DeducedA.getQualifiers();
+
+    // Under Objective-C++ ARC, the deduced type may have implicitly been
+    // given strong lifetime. If so, update the original qualifiers to
+    // include this strong lifetime.
+    if (S.getLangOpts().ObjCAutoRefCount &&
+        DeducedAQuals.getObjCLifetime() == Qualifiers::OCL_Strong &&
+        AQuals.getObjCLifetime() == Qualifiers::OCL_None) {
+      AQuals.setObjCLifetime(Qualifiers::OCL_Strong);
+    }
+
     if (AQuals == DeducedAQuals) {
       // Qualifiers match; there's nothing to do.
     } else if (!DeducedAQuals.compatiblyIncludes(AQuals)) {
@@ -2512,8 +2524,9 @@ Sema::FinishTemplateArgumentDeduction(FunctionTemplateDecl *FunctionTemplate,
 
   // Enter a new template instantiation context while we instantiate the
   // actual function declaration.
+  SmallVector<TemplateArgument, 4> DeducedArgs(Deduced.begin(), Deduced.end());
   InstantiatingTemplate Inst(*this, FunctionTemplate->getLocation(),
-                             FunctionTemplate, Deduced.data(), Deduced.size(),
+                             FunctionTemplate, DeducedArgs,
               ActiveTemplateInstantiation::DeducedTemplateArgumentSubstitution,
                              Info);
   if (Inst)
@@ -4118,8 +4131,9 @@ Sema::getMoreSpecializedPartialSpecialization(
                                             /*PartialOrdering=*/true,
                                             /*RefParamComparisons=*/0);
   if (Better1) {
+    SmallVector<TemplateArgument, 4> DeducedArgs(Deduced.begin(),Deduced.end());
     InstantiatingTemplate Inst(*this, PS2->getLocation(), PS2,
-                               Deduced.data(), Deduced.size(), Info);
+                               DeducedArgs, Info);
     Better1 = !::FinishTemplateArgumentDeduction(*this, PS2,
                                                  PS1->getTemplateArgs(),
                                                  Deduced, Info);
@@ -4134,8 +4148,9 @@ Sema::getMoreSpecializedPartialSpecialization(
                                             /*PartialOrdering=*/true,
                                             /*RefParamComparisons=*/0);
   if (Better2) {
+    SmallVector<TemplateArgument, 4> DeducedArgs(Deduced.begin(),Deduced.end());
     InstantiatingTemplate Inst(*this, PS1->getLocation(), PS1,
-                               Deduced.data(), Deduced.size(), Info);
+                               DeducedArgs, Info);
     Better2 = !::FinishTemplateArgumentDeduction(*this, PS1,
                                                  PS2->getTemplateArgs(),
                                                  Deduced, Info);

@@ -40,12 +40,6 @@ void ExprEngine::CreateCXXTemporaryObject(const MaterializeTemporaryExpr *ME,
   Bldr.generateNode(ME, Pred, state->BindExpr(ME, LCtx, loc::MemRegionVal(R)));
 }
 
-void ExprEngine::VisitCXXTemporaryObjectExpr(const CXXTemporaryObjectExpr *expr,
-                                             ExplodedNode *Pred,
-                                             ExplodedNodeSet &Dst) {
-  VisitCXXConstructExpr(expr, 0, Pred, Dst);
-}
-
 void ExprEngine::VisitCXXConstructExpr(const CXXConstructExpr *CE,
                                        const MemRegion *Dest,
                                        ExplodedNode *Pred,
@@ -134,6 +128,19 @@ void ExprEngine::VisitCXXNewExpr(const CXXNewExpr *CNE, ExplodedNode *Pred,
     State = State->BindExpr(CNE, LCtx, PlacementLoc);
   } else {
     State = State->BindExpr(CNE, LCtx, symVal);
+  }
+
+  // If the type is not a record, we won't have a CXXConstructExpr as an
+  // initializer. Copy the value over.
+  if (const Expr *Init = CNE->getInitializer()) {
+    if (!isa<CXXConstructExpr>(Init)) {
+      QualType ObjTy = CNE->getType()->getAs<PointerType>()->getPointeeType();
+      (void)ObjTy;
+      assert(!ObjTy->isRecordType());
+      SVal Location = State->getSVal(CNE, LCtx);
+      if (isa<Loc>(Location))
+        State = State->bindLoc(cast<Loc>(Location), State->getSVal(Init, LCtx));
+    }
   }
 
   Bldr.generateNode(CNE, Pred, State);

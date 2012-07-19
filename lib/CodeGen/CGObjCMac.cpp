@@ -6392,6 +6392,7 @@ CodeGen::CreateMacObjCRuntime(CodeGen::CodeGenModule &CGM) {
 
   case ObjCRuntime::GNUstep:
   case ObjCRuntime::GCC:
+  case ObjCRuntime::ObjFW:
     llvm_unreachable("these runtimes are not Mac runtimes");
   }
   llvm_unreachable("bad runtime");
