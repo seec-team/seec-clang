@@ -14,7 +14,7 @@
 #include "clang/StaticAnalyzer/Core/CheckerManager.h"
 #include "clang/StaticAnalyzer/Core/Checker.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h"
-#include "clang/StaticAnalyzer/Core/PathSensitive/Calls.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/CallEvent.h"
 #include "clang/Analysis/ProgramPoint.h"
 #include "clang/AST/DeclBase.h"
 
@@ -568,8 +568,10 @@ void CheckerManager::runCheckersForEvalCall(ExplodedNodeSet &Dst,
     }
     
     // If none of the checkers evaluated the call, ask ExprEngine to handle it.
-    if (!anyEvaluated)
-      Eng.defaultEvalCall(Dst, Pred, Call);
+    if (!anyEvaluated) {
+      NodeBuilder B(Pred, Dst, Eng.getBuilderContext());
+      Eng.defaultEvalCall(B, Pred, Call);
+    }
   }
 }
 

@@ -4655,11 +4655,6 @@ static bool FindOverriddenMethod(const CXXBaseSpecifier *Specifier,
   return false;
 }
 
-static bool hasDelayedExceptionSpec(CXXMethodDecl *Method) {
-  const FunctionProtoType *Proto =Method->getType()->getAs<FunctionProtoType>();
-  return Proto && Proto->getExceptionSpecType() == EST_Delayed;
-}
-
 /// AddOverriddenMethods - See if a method overrides any in the base classes,
 /// and if so, check that it's a valid override and remember it.
 bool Sema::AddOverriddenMethods(CXXRecordDecl *DC, CXXMethodDecl *MD) {
@@ -4675,8 +4670,7 @@ bool Sema::AddOverriddenMethods(CXXRecordDecl *DC, CXXMethodDecl *MD) {
       if (CXXMethodDecl *OldMD = dyn_cast<CXXMethodDecl>(*I)) {
         MD->addOverriddenMethod(OldMD->getCanonicalDecl());
         if (!CheckOverridingFunctionReturnType(MD, OldMD) &&
-            (hasDelayedExceptionSpec(MD) ||
-             !CheckOverridingFunctionExceptionSpec(MD, OldMD)) &&
+            !CheckOverridingFunctionExceptionSpec(MD, OldMD) &&
             !CheckIfOverriddenFunctionIsMarkedFinal(MD, OldMD)) {
           AddedAny = true;
         }
@@ -6086,10 +6080,11 @@ bool Sema::CheckFunctionDeclaration(Scope *S, FunctionDecl *NewFD,
     // compatible, and if it does, warn the user.
     if (NewFD->isExternC()) {
       QualType R = NewFD->getResultType();
-      if (!R.isPODType(Context) && 
-          !R->isVoidType())
-        Diag( NewFD->getLocation(), diag::warn_return_value_udt ) 
-          << NewFD << R;
+      if (R->isIncompleteType() && !R->isVoidType())
+        Diag(NewFD->getLocation(), diag::warn_return_value_udt_incomplete)
+            << NewFD << R;
+      else if (!R.isPODType(Context) && !R->isVoidType())
+        Diag(NewFD->getLocation(), diag::warn_return_value_udt) << NewFD << R;
     }
   }
   return Redeclaration;
@@ -7508,6 +7503,10 @@ static bool ShouldWarnAboutMissingPrototype(const FunctionDecl *FD) {
   if (FD->isFunctionTemplateSpecialization())
     return false;
 
+  // Don't warn for OpenCL kernels.
+  if (FD->hasAttr<OpenCLKernelAttr>())
+    return false;
+  
   bool MissingPrototype = true;
   for (const FunctionDecl *Prev = FD->getPreviousDecl();
        Prev; Prev = Prev->getPreviousDecl()) {
@@ -9802,6 +9801,23 @@ void Sema::ActOnFields(Scope* S,
   if (EnclosingDecl->isInvalidDecl())
     return;
 
+  // If this is an Objective-C @implementation or category and we have
+  // new fields here we should reset the layout of the interface since
+  // it will now change.
+  if (!Fields.empty() && isa<ObjCContainerDecl>(EnclosingDecl)) {
+    ObjCContainerDecl *DC = cast<ObjCContainerDecl>(EnclosingDecl);
+    switch (DC->getKind()) {
+    default: break;
+    case Decl::ObjCCategory:
+      Context.ResetObjCLayout(cast<ObjCCategoryDecl>(DC)->getClassInterface());
+      break;
+    case Decl::ObjCImplementation:
+      Context.
+        ResetObjCLayout(cast<ObjCImplementationDecl>(DC)->getClassInterface());
+      break;
+    }
+  }
+  
   RecordDecl *Record = dyn_cast<RecordDecl>(EnclosingDecl);
 
   // Start counting up the number of named members; make sure to include
@@ -10009,7 +10025,7 @@ void Sema::ActOnFields(Scope* S,
           // However, here we check whether this particular class is only 
           // non-POD because of the presence of an Objective-C pointer member. 
           // If so, objects of this type cannot be shared between code compiled 
-          // with instant objects and code compiled with manual retain/release.
+          // with ARC and code compiled with manual retain/release.
           if (getLangOpts().ObjCAutoRefCount &&
               CXXRecord->hasObjectMember() && 
               CXXRecord->getLinkage() == ExternalLinkage) {
@@ -10411,11 +10427,6 @@ Decl *Sema::ActOnEnumConstant(Scope *S, Decl *theEnumDecl, Decl *lastEnumConst,
   // different from T:
   // - every enumerator of every member of class T that is an unscoped 
   // enumerated type
-  //
-  // C++ [dcl.enum]p10:
-  // Each enum-name and each unscoped enumerator is declared in the scope that 
-  // immediately contains the enum-specifier. Each scoped enumerator is declared 
-  // in the scope of the enumeration.
   if (CXXRecordDecl *Record
                       = dyn_cast<CXXRecordDecl>(
                              TheEnumDecl->getDeclContext()->getRedeclContext()))

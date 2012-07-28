@@ -341,9 +341,9 @@ Decl *TemplateDeclInstantiator::VisitVarDecl(VarDecl *D) {
     // We already have an initializer in the class.
   } else if (D->getInit()) {
     if (Var->isStaticDataMember() && !D->isOutOfLine())
-      SemaRef.PushExpressionEvaluationContext(Sema::ConstantEvaluated);
+      SemaRef.PushExpressionEvaluationContext(Sema::ConstantEvaluated, D);
     else
-      SemaRef.PushExpressionEvaluationContext(Sema::PotentiallyEvaluated);
+      SemaRef.PushExpressionEvaluationContext(Sema::PotentiallyEvaluated, D);
 
     // Instantiate the initializer.
     ExprResult Init = SemaRef.SubstInitializer(D->getInit(), TemplateArgs,
@@ -2395,8 +2395,17 @@ void Sema::InstantiateExceptionSpec(SourceLocation PointOfInstantiation,
 
   InstantiatingTemplate Inst(*this, PointOfInstantiation, Decl,
                              InstantiatingTemplate::ExceptionSpecification());
-  if (Inst)
+  if (Inst) {
+    // We hit the instantiation depth limit. Clear the exception specification
+    // so that our callers don't have to cope with EST_Uninstantiated.
+    FunctionProtoType::ExtProtoInfo EPI = Proto->getExtProtoInfo();
+    EPI.ExceptionSpecType = EST_None;
+    Decl->setType(Context.getFunctionType(Proto->getResultType(),
+                                          Proto->arg_type_begin(),
+                                          Proto->getNumArgs(),
+                                          EPI));
     return;
+  }
 
   // Enter the scope of this instantiation. We don't use
   // PushDeclContext because we don't have a scope.
@@ -2461,6 +2470,8 @@ TemplateDeclInstantiator::InitFunctionInstantiation(FunctionDecl *New,
       FunctionDecl *ExceptionSpecTemplate = Tmpl;
       if (EPI.ExceptionSpecType == EST_Uninstantiated)
         ExceptionSpecTemplate = EPI.ExceptionSpecTemplate;
+      assert(EPI.ExceptionSpecType != EST_Unevaluated &&
+             "instantiating implicitly-declared special member");
 
       // Mark the function has having an uninstantiated exception specification.
       const FunctionProtoType *NewProto
@@ -3431,7 +3442,7 @@ NamedDecl *Sema::FindInstantiatedDecl(SourceLocation Loc, NamedDecl *D,
 void Sema::PerformPendingInstantiations(bool LocalOnly) {
   // Load pending instantiations from the external source.
   if (!LocalOnly && ExternalSource) {
-    SmallVector<std::pair<ValueDecl *, SourceLocation>, 4> Pending;
+    SmallVector<PendingImplicitInstantiation, 4> Pending;
     ExternalSource->ReadPendingInstantiations(Pending);
     PendingInstantiations.insert(PendingInstantiations.begin(),
                                  Pending.begin(), Pending.end());

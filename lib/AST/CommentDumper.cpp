@@ -107,6 +107,21 @@ void CommentDumper::visitInlineCommandComment(const InlineCommandComment *C) {
   dumpComment(C);
 
   OS << " Name=\"" << C->getCommandName() << "\"";
+  switch (C->getRenderKind()) {
+  case InlineCommandComment::RenderNormal:
+    OS << " RenderNormal";
+    break;
+  case InlineCommandComment::RenderBold:
+    OS << " RenderBold";
+    break;
+  case InlineCommandComment::RenderMonospaced:
+    OS << " RenderMonospaced";
+    break;
+  case InlineCommandComment::RenderEmphasized:
+    OS << " RenderEmphasized";
+    break;
+  }
+
   for (unsigned i = 0, e = C->getNumArgs(); i != e; ++i)
     OS << " Arg[" << i << "]=\"" << C->getArgText(i) << "\"";
 }
@@ -140,6 +155,8 @@ void CommentDumper::visitBlockCommandComment(const BlockCommandComment *C) {
   dumpComment(C);
 
   OS << " Name=\"" << C->getCommandName() << "\"";
+  for (unsigned i = 0, e = C->getNumArgs(); i != e; ++i)
+    OS << " Arg[" << i << "]=\"" << C->getArgText(i) << "\"";
 }
 
 void CommentDumper::visitParamCommandComment(const ParamCommandComment *C) {
@@ -152,9 +169,11 @@ void CommentDumper::visitParamCommandComment(const ParamCommandComment *C) {
   else
     OS << " implicitly";
 
-  if (C->hasParamName()) {
+  if (C->hasParamName())
     OS << " Param=\"" << C->getParamName() << "\"";
-  }
+
+  if (C->isParamIndexValid())
+    OS << " ParamIndex=" << C->getParamIndex();
 }
 
 void CommentDumper::visitVerbatimBlockComment(const VerbatimBlockComment *C) {
