@@ -642,7 +642,9 @@ namespace clang {
       /// \brief The pseudo-object placeholder type.
       PREDEF_TYPE_PSEUDO_OBJECT = 35,
       /// \brief The __va_list_tag placeholder type.
-      PREDEF_TYPE_VA_LIST_TAG = 36
+      PREDEF_TYPE_VA_LIST_TAG = 36,
+      /// \brief The placeholder type for builtin functions.
+      PREDEF_TYPE_BUILTIN_FN = 37
     };
 
     /// \brief The number of predefined type IDs that are reserved for
@@ -999,8 +1001,10 @@ namespace clang {
       STMT_RETURN,
       /// \brief A DeclStmt record.
       STMT_DECL,
-      /// \brief An AsmStmt record.
-      STMT_ASM,
+      /// \brief A GCC-style AsmStmt record.
+      STMT_GCCASM,
+      /// \brief A MS-style AsmStmt record.
+      STMT_MSASM,
       /// \brief A PredefinedExpr record.
       EXPR_PREDEFINED,
       /// \brief A DeclRefExpr record.

@@ -51,7 +51,7 @@ static const char *getAnalysisStoreName(AnalysisStores Kind) {
     llvm_unreachable("Unknown analysis store!");
 #define ANALYSIS_STORE(NAME, CMDFLAG, DESC, CREATFN) \
   case NAME##Model: return CMDFLAG;
-#include "clang/Frontend/Analyses.def"
+#include "clang/StaticAnalyzer/Core/Analyses.def"
   }
 }
 
@@ -61,7 +61,7 @@ static const char *getAnalysisConstraintName(AnalysisConstraints Kind) {
     llvm_unreachable("Unknown analysis constraints!");
 #define ANALYSIS_CONSTRAINTS(NAME, CMDFLAG, DESC, CREATFN) \
   case NAME##Model: return CMDFLAG;
-#include "clang/Frontend/Analyses.def"
+#include "clang/StaticAnalyzer/Core/Analyses.def"
   }
 }
 
@@ -71,7 +71,7 @@ static const char *getAnalysisDiagClientName(AnalysisDiagClients Kind) {
     llvm_unreachable("Unknown analysis client!");
 #define ANALYSIS_DIAGNOSTICS(NAME, CMDFLAG, DESC, CREATFN, AUTOCREATE) \
   case PD_##NAME: return CMDFLAG;
-#include "clang/Frontend/Analyses.def"
+#include "clang/StaticAnalyzer/Core/Analyses.def"
   }
 }
 
@@ -81,7 +81,7 @@ static const char *getAnalysisPurgeModeName(AnalysisPurgeMode Kind) {
     llvm_unreachable("Unknown analysis purge mode!");
 #define ANALYSIS_PURGE(NAME, CMDFLAG, DESC) \
   case NAME: return CMDFLAG;
-#include "clang/Frontend/Analyses.def"
+#include "clang/StaticAnalyzer/Core/Analyses.def"
   }
 }
 
@@ -91,7 +91,7 @@ static const char *getAnalysisIPAModeName(AnalysisIPAMode Kind) {
     llvm_unreachable("Unknown analysis ipa mode!");
 #define ANALYSIS_IPA(NAME, CMDFLAG, DESC) \
   case NAME: return CMDFLAG;
-#include "clang/Frontend/Analyses.def"
+#include "clang/StaticAnalyzer/Core/Analyses.def"
   }
 }
 
@@ -102,7 +102,7 @@ static const char *
     llvm_unreachable("Unknown analysis inlining mode!");
 #define ANALYSIS_INLINE_SELECTION(NAME, CMDFLAG, DESC) \
   case NAME: return CMDFLAG;
-#include "clang/Frontend/Analyses.def"
+#include "clang/StaticAnalyzer/Core/Analyses.def"
   }
 }
 
@@ -147,7 +147,7 @@ static void AnalyzerOptsToArgs(const AnalyzerOptions &Opts, ToArgsList &Res) {
                   getAnalysisPurgeModeName(Opts.AnalysisPurgeOpt));
   if (!Opts.AnalyzeSpecificFunction.empty())
     Res.push_back("-analyze-function", Opts.AnalyzeSpecificFunction);
-  if (Opts.IPAMode != Inlining)
+  if (Opts.IPAMode != DynamicDispatchBifurcate)
     Res.push_back("-analyzer-ipa", getAnalysisIPAModeName(Opts.IPAMode));
   if (Opts.InliningMode != NoRedundancy)
     Res.push_back("-analyzer-inlining-mode",
@@ -159,13 +159,13 @@ static void AnalyzerOptsToArgs(const AnalyzerOptions &Opts, ToArgsList &Res) {
     Res.push_back("-analyzer-display-progress");
   if (Opts.AnalyzeNestedBlocks)
     Res.push_back("-analyzer-opt-analyze-nested-blocks");
-  if (Opts.EagerlyAssume)
+  if (Opts.eagerlyAssumeBinOpBifurcation)
     Res.push_back("-analyzer-eagerly-assume");
   if (Opts.TrimGraph)
     Res.push_back("-trim-egraph");
-  if (Opts.VisualizeEGDot)
+  if (Opts.visualizeExplodedGraphWithGraphViz)
     Res.push_back("-analyzer-viz-egraph-graphviz");
-  if (Opts.VisualizeEGUbi)
+  if (Opts.visualizeExplodedGraphWithUbiGraph)
     Res.push_back("-analyzer-viz-egraph-ubigraph");
   if (Opts.NoRetryExhausted)
     Res.push_back("-analyzer-disable-retry-exhausted");
@@ -434,6 +434,7 @@ static const char *getActionName(frontend::ActionKind Kind) {
   case frontend::PluginAction:
     llvm_unreachable("Invalid kind!");
 
+  case frontend::ASTDeclList:            return "-ast-list";
   case frontend::ASTDump:                return "-ast-dump";
   case frontend::ASTDumpXML:             return "-ast-dump-xml";
   case frontend::ASTPrint:               return "-ast-print";
@@ -811,7 +812,7 @@ static void LangOptsToArgs(const LangOptions &Opts, ToArgsList &Res) {
   Res.push_back("-fobjc-runtime=" + Opts.ObjCRuntime.getAsString());
   if (Opts.ObjCAutoRefCount)
     Res.push_back("-fobjc-arc");
-  if (Opts.ObjCRuntimeHasWeak)
+  if (Opts.ObjCARCWeak)
     Res.push_back("-fobjc-runtime-has-weak");
   if (!Opts.ObjCInferRelatedResultType)
     Res.push_back("-fno-objc-infer-related-result-type");
@@ -930,7 +931,7 @@ static void TargetOptsToArgs(const TargetOptions &Opts,
 
 void CompilerInvocation::toArgs(std::vector<std::string> &Res) const {
   ToArgsList List(Res);
-  AnalyzerOptsToArgs(getAnalyzerOpts(), List);
+  AnalyzerOptsToArgs(*getAnalyzerOpts(), List);
   CodeGenOptsToArgs(getCodeGenOpts(), List);
   DependencyOutputOptsToArgs(getDependencyOutputOpts(), List);
   DiagnosticOptsToArgs(getDiagnosticOpts(), List);
@@ -1023,7 +1024,7 @@ static bool ParseAnalyzerArgs(AnalyzerOptions &Opts, ArgList &Args,
     AnalysisStores Value = llvm::StringSwitch<AnalysisStores>(Name)
 #define ANALYSIS_STORE(NAME, CMDFLAG, DESC, CREATFN) \
       .Case(CMDFLAG, NAME##Model)
-#include "clang/Frontend/Analyses.def"
+#include "clang/StaticAnalyzer/Core/Analyses.def"
       .Default(NumStores);
     if (Value == NumStores) {
       Diags.Report(diag::err_drv_invalid_value)
@@ -1039,7 +1040,7 @@ static bool ParseAnalyzerArgs(AnalyzerOptions &Opts, ArgList &Args,
     AnalysisConstraints Value = llvm::StringSwitch<AnalysisConstraints>(Name)
 #define ANALYSIS_CONSTRAINTS(NAME, CMDFLAG, DESC, CREATFN) \
       .Case(CMDFLAG, NAME##Model)
-#include "clang/Frontend/Analyses.def"
+#include "clang/StaticAnalyzer/Core/Analyses.def"
       .Default(NumConstraints);
     if (Value == NumConstraints) {
       Diags.Report(diag::err_drv_invalid_value)
@@ -1055,7 +1056,7 @@ static bool ParseAnalyzerArgs(AnalyzerOptions &Opts, ArgList &Args,
     AnalysisDiagClients Value = llvm::StringSwitch<AnalysisDiagClients>(Name)
 #define ANALYSIS_DIAGNOSTICS(NAME, CMDFLAG, DESC, CREATFN, AUTOCREAT) \
       .Case(CMDFLAG, PD_##NAME)
-#include "clang/Frontend/Analyses.def"
+#include "clang/StaticAnalyzer/Core/Analyses.def"
       .Default(NUM_ANALYSIS_DIAG_CLIENTS);
     if (Value == NUM_ANALYSIS_DIAG_CLIENTS) {
       Diags.Report(diag::err_drv_invalid_value)
@@ -1071,7 +1072,7 @@ static bool ParseAnalyzerArgs(AnalyzerOptions &Opts, ArgList &Args,
     AnalysisPurgeMode Value = llvm::StringSwitch<AnalysisPurgeMode>(Name)
 #define ANALYSIS_PURGE(NAME, CMDFLAG, DESC) \
       .Case(CMDFLAG, NAME)
-#include "clang/Frontend/Analyses.def"
+#include "clang/StaticAnalyzer/Core/Analyses.def"
       .Default(NumPurgeModes);
     if (Value == NumPurgeModes) {
       Diags.Report(diag::err_drv_invalid_value)
@@ -1087,7 +1088,7 @@ static bool ParseAnalyzerArgs(AnalyzerOptions &Opts, ArgList &Args,
     AnalysisIPAMode Value = llvm::StringSwitch<AnalysisIPAMode>(Name)
 #define ANALYSIS_IPA(NAME, CMDFLAG, DESC) \
       .Case(CMDFLAG, NAME)
-#include "clang/Frontend/Analyses.def"
+#include "clang/StaticAnalyzer/Core/Analyses.def"
       .Default(NumIPAModes);
     if (Value == NumIPAModes) {
       Diags.Report(diag::err_drv_invalid_value)
@@ -1103,7 +1104,7 @@ static bool ParseAnalyzerArgs(AnalyzerOptions &Opts, ArgList &Args,
     AnalysisInliningMode Value = llvm::StringSwitch<AnalysisInliningMode>(Name)
 #define ANALYSIS_INLINING_MODE(NAME, CMDFLAG, DESC) \
       .Case(CMDFLAG, NAME)
-#include "clang/Frontend/Analyses.def"
+#include "clang/StaticAnalyzer/Core/Analyses.def"
       .Default(NumInliningModes);
     if (Value == NumInliningModes) {
       Diags.Report(diag::err_drv_invalid_value)
@@ -1115,22 +1116,23 @@ static bool ParseAnalyzerArgs(AnalyzerOptions &Opts, ArgList &Args,
   }
 
   Opts.ShowCheckerHelp = Args.hasArg(OPT_analyzer_checker_help);
-  Opts.VisualizeEGDot = Args.hasArg(OPT_analyzer_viz_egraph_graphviz);
-  Opts.VisualizeEGUbi = Args.hasArg(OPT_analyzer_viz_egraph_ubigraph);
+  Opts.visualizeExplodedGraphWithGraphViz =
+    Args.hasArg(OPT_analyzer_viz_egraph_graphviz);
+  Opts.visualizeExplodedGraphWithUbiGraph =
+    Args.hasArg(OPT_analyzer_viz_egraph_ubigraph);
   Opts.NoRetryExhausted = Args.hasArg(OPT_analyzer_disable_retry_exhausted);
   Opts.AnalyzeAll = Args.hasArg(OPT_analyzer_opt_analyze_headers);
   Opts.AnalyzerDisplayProgress = Args.hasArg(OPT_analyzer_display_progress);
   Opts.AnalyzeNestedBlocks =
     Args.hasArg(OPT_analyzer_opt_analyze_nested_blocks);
-  Opts.EagerlyAssume = Args.hasArg(OPT_analyzer_eagerly_assume);
+  Opts.eagerlyAssumeBinOpBifurcation = Args.hasArg(OPT_analyzer_eagerly_assume);
   Opts.AnalyzeSpecificFunction = Args.getLastArgValue(OPT_analyze_function);
   Opts.UnoptimizedCFG = Args.hasArg(OPT_analysis_UnoptimizedCFG);
   Opts.CFGAddImplicitDtors = Args.hasArg(OPT_analysis_CFGAddImplicitDtors);
-  Opts.CFGAddInitializers = Args.hasArg(OPT_analysis_CFGAddInitializers);
   Opts.TrimGraph = Args.hasArg(OPT_trim_egraph);
   Opts.MaxNodes = Args.getLastArgIntValue(OPT_analyzer_max_nodes, 150000,Diags);
-  Opts.MaxLoop = Args.getLastArgIntValue(OPT_analyzer_max_loop, 4, Diags);
-  Opts.EagerlyTrimEGraph = !Args.hasArg(OPT_analyzer_no_eagerly_trim_egraph);
+  Opts.maxBlockVisitOnPath = Args.getLastArgIntValue(OPT_analyzer_max_loop, 4, Diags);
+  Opts.eagerlyTrimExplodedGraph = !Args.hasArg(OPT_analyzer_no_eagerly_trim_egraph);
   Opts.PrintStats = Args.hasArg(OPT_analyzer_stats);
   Opts.InlineMaxStackDepth =
     Args.getLastArgIntValue(OPT_analyzer_inline_max_stack_depth,
@@ -1153,6 +1155,36 @@ static bool ParseAnalyzerArgs(AnalyzerOptions &Opts, ArgList &Args,
     checkerList.split(checkers, ",");
     for (unsigned i = 0, e = checkers.size(); i != e; ++i)
       Opts.CheckersControlList.push_back(std::make_pair(checkers[i], enable));
+  }
+  
+  // Go through the analyzer configuration options.
+  for (arg_iterator it = Args.filtered_begin(OPT_analyzer_config),
+       ie = Args.filtered_end(); it != ie; ++it) {
+    const Arg *A = *it;
+    A->claim();
+    // We can have a list of comma separated config names, e.g:
+    // '-analyzer-config key1=val1,key2=val2'
+    StringRef configList = A->getValue(Args);
+    SmallVector<StringRef, 4> configVals;
+    configList.split(configVals, ",");
+    for (unsigned i = 0, e = configVals.size(); i != e; ++i) {
+      StringRef key, val;
+      llvm::tie(key, val) = configVals[i].split("=");
+      if (val.empty()) {
+        Diags.Report(SourceLocation(),
+                     diag::err_analyzer_config_no_value) << configVals[i];
+        Success = false;
+        break;
+      }
+      if (val.find('=') != StringRef::npos) {
+        Diags.Report(SourceLocation(),
+                     diag::err_analyzer_config_multiple_values)
+          << configVals[i];
+        Success = false;
+        break;
+      }
+      Opts.Config[key] = val;
+    }
   }
 
   return Success;
@@ -1263,10 +1295,11 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   Opts.EmitGcovArcs = Args.hasArg(OPT_femit_coverage_data);
   Opts.EmitGcovNotes = Args.hasArg(OPT_femit_coverage_notes);
   Opts.EmitOpenCLArgMetadata = Args.hasArg(OPT_cl_kernel_arg_info);
-  Opts.EmitMicrosoftInlineAsm = Args.hasArg(OPT_fenable_experimental_ms_inline_asm);
   Opts.CoverageFile = Args.getLastArgValue(OPT_coverage_file);
   Opts.DebugCompilationDir = Args.getLastArgValue(OPT_fdebug_compilation_dir);
   Opts.LinkBitcodeFile = Args.getLastArgValue(OPT_mlink_bitcode_file);
+  Opts.SSPBufferSize =
+    Args.getLastArgIntValue(OPT_stack_protector_buffer_size, 8, Diags);
   Opts.StackRealignment = Args.hasArg(OPT_mstackrealign);
   if (Arg *A = Args.getLastArg(OPT_mstack_alignment)) {
     StringRef Val = A->getValue(Args);
@@ -1438,6 +1471,8 @@ static InputKind ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
     switch (A->getOption().getID()) {
     default:
       llvm_unreachable("Invalid option in group!");
+    case OPT_ast_list:
+      Opts.ProgramAction = frontend::ASTDeclList; break;
     case OPT_ast_dump:
       Opts.ProgramAction = frontend::ASTDump; break;
     case OPT_ast_dump_xml:
@@ -1939,13 +1974,15 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
       Opts.setGC(LangOptions::HybridGC);
     else if (Args.hasArg(OPT_fobjc_arc)) {
       Opts.ObjCAutoRefCount = 1;
-      if (!Opts.ObjCRuntime.isNonFragile())
-        Diags.Report(diag::err_arc_nonfragile_abi);
-    }
+      if (!Opts.ObjCRuntime.allowsARC())
+        Diags.Report(diag::err_arc_unsupported_on_runtime);
 
-    Opts.ObjCRuntimeHasWeak = Opts.ObjCRuntime.hasWeak();
-    if (Args.hasArg(OPT_fobjc_runtime_has_weak))
-      Opts.ObjCRuntimeHasWeak = 1;
+      // Only set ObjCARCWeak if ARC is enabled.
+      if (Args.hasArg(OPT_fobjc_runtime_has_weak))
+        Opts.ObjCARCWeak = 1;
+      else
+        Opts.ObjCARCWeak = Opts.ObjCRuntime.allowsWeak();
+    }
 
     if (Args.hasArg(OPT_fno_objc_infer_related_result_type))
       Opts.ObjCInferRelatedResultType = 0;
@@ -2094,9 +2131,10 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
                                  Opts.Deprecated);
 
   // FIXME: Eliminate this dependency.
-  unsigned Opt = getOptimizationLevel(Args, IK, Diags);
+  unsigned Opt = getOptimizationLevel(Args, IK, Diags),
+       OptSize = getOptimizationLevelSize(Args, IK, Diags);
   Opts.Optimize = Opt != 0;
-  Opts.OptimizeSize = getOptimizationLevelSize(Args, IK, Diags);
+  Opts.OptimizeSize = OptSize != 0;
 
   // This is the __NO_INLINE__ define, which just depends on things like the
   // optimization level and -fno-inline, not actually whether the backend has
@@ -2105,6 +2143,8 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
 
   Opts.FastMath = Args.hasArg(OPT_ffast_math);
   Opts.FiniteMathOnly = Args.hasArg(OPT_ffinite_math_only);
+
+  Opts.EmitMicrosoftInlineAsm = Args.hasArg(OPT_fenable_experimental_ms_inline_asm);
 
   unsigned SSP = Args.getLastArgIntValue(OPT_stack_protector, 0, Diags);
   switch (SSP) {
@@ -2283,7 +2323,7 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
     }
   }
 
-  Success = ParseAnalyzerArgs(Res.getAnalyzerOpts(), *Args, Diags) && Success;
+  Success = ParseAnalyzerArgs(*Res.getAnalyzerOpts(), *Args, Diags) && Success;
   Success = ParseMigratorArgs(Res.getMigratorOpts(), *Args) && Success;
   ParseDependencyOutputArgs(Res.getDependencyOutputOpts(), *Args);
   Success = ParseDiagnosticArgs(Res.getDiagnosticOpts(), *Args, &Diags)

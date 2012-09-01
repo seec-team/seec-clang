@@ -26,6 +26,7 @@ namespace comments {
 
 class Lexer;
 class TextTokenRetokenizer;
+class CommandTraits;
 
 namespace tok {
 enum TokenKind {
@@ -47,11 +48,6 @@ enum TokenKind {
   html_end_tag        // </tag
 };
 } // end namespace tok
-
-class CommentOptions {
-public:
-  bool Markdown;
-};
 
 /// \brief Comment token.
 class Token {
@@ -208,17 +204,18 @@ public:
 /// \brief Comment lexer.
 class Lexer {
 private:
-  Lexer(const Lexer&);          // DO NOT IMPLEMENT
-  void operator=(const Lexer&); // DO NOT IMPLEMENT
+  Lexer(const Lexer &) LLVM_DELETED_FUNCTION;
+  void operator=(const Lexer &) LLVM_DELETED_FUNCTION;
 
   /// Allocator for strings that are semantic values of tokens and have to be
   /// computed (for example, resolved decimal character references).
   llvm::BumpPtrAllocator &Allocator;
 
+  const CommandTraits &Traits;
+
   const char *const BufferStart;
   const char *const BufferEnd;
   SourceLocation FileLoc;
-  CommentOptions CommOpts;
 
   const char *BufferPtr;
 
@@ -262,36 +259,9 @@ private:
   /// Current lexing mode.
   LexerState State;
 
-  /// A verbatim-like block command eats every character (except line starting
-  /// decorations) until matching end command is seen or comment end is hit.
-  struct VerbatimBlockCommand {
-    StringRef BeginName;
-    StringRef EndName;
-  };
-
-  typedef SmallVector<VerbatimBlockCommand, 4> VerbatimBlockCommandVector;
-
-  /// Registered verbatim-like block commands.
-  VerbatimBlockCommandVector VerbatimBlockCommands;
-
   /// If State is LS_VerbatimBlock, contains the name of verbatim end
   /// command, including command marker.
   SmallString<16> VerbatimBlockEndCommandName;
-
-  bool isVerbatimBlockCommand(StringRef BeginName, StringRef &EndName) const;
-
-  /// A verbatim-like line command eats everything until a newline is seen or
-  /// comment end is hit.
-  struct VerbatimLineCommand {
-    StringRef Name;
-  };
-
-  typedef SmallVector<VerbatimLineCommand, 4> VerbatimLineCommandVector;
-
-  /// Registered verbatim-like line commands.
-  VerbatimLineCommandVector VerbatimLineCommands;
-
-  bool isVerbatimLineCommand(StringRef Name) const;
 
   /// Given a character reference name (e.g., "lt"), return the character that
   /// it stands for (e.g., "<").
@@ -359,8 +329,8 @@ private:
   void lexHTMLEndTag(Token &T);
 
 public:
-  Lexer(llvm::BumpPtrAllocator &Allocator,
-        SourceLocation FileLoc, const CommentOptions &CommOpts,
+  Lexer(llvm::BumpPtrAllocator &Allocator, const CommandTraits &Traits,
+        SourceLocation FileLoc,
         const char *BufferStart, const char *BufferEnd);
 
   void lex(Token &T);
@@ -368,12 +338,6 @@ public:
   StringRef getSpelling(const Token &Tok,
                         const SourceManager &SourceMgr,
                         bool *Invalid = NULL) const;
-
-  /// \brief Register a new verbatim block command.
-  void addVerbatimBlockCommand(StringRef BeginName, StringRef EndName);
-
-  /// \brief Register a new verbatim line command.
-  void addVerbatimLineCommand(StringRef Name);
 };
 
 } // end namespace comments

@@ -145,6 +145,7 @@ CXXScopeSpec::getWithLocInContext(ASTContext &Context) const {
 /// DeclaratorChunk::getFunction - Return a DeclaratorChunk for a function.
 /// "TheDeclarator" is the declarator that this will be added to.
 DeclaratorChunk DeclaratorChunk::getFunction(bool hasProto, bool isVariadic,
+                                             bool isAmbiguous,
                                              SourceLocation EllipsisLoc,
                                              ParamInfo *ArgInfo,
                                              unsigned NumArgs,
@@ -173,6 +174,7 @@ DeclaratorChunk DeclaratorChunk::getFunction(bool hasProto, bool isVariadic,
   I.Fun.AttrList                = 0;
   I.Fun.hasPrototype            = hasProto;
   I.Fun.isVariadic              = isVariadic;
+  I.Fun.isAmbiguous             = isAmbiguous;
   I.Fun.EllipsisLoc             = EllipsisLoc.getRawEncoding();
   I.Fun.DeleteArgInfo           = false;
   I.Fun.TypeQuals               = TypeQuals;
@@ -268,6 +270,7 @@ bool Declarator::isDeclarationOfFunction() const {
     case TST_int:
     case TST_int128:
     case TST_struct:
+    case TST_interface:
     case TST_union:
     case TST_unknown_anytype:
     case TST_unspecified:
@@ -323,10 +326,14 @@ unsigned DeclSpec::getParsedSpecifiers() const {
 
 template <class T> static bool BadSpecifier(T TNew, T TPrev,
                                             const char *&PrevSpec,
-                                            unsigned &DiagID) {
+                                            unsigned &DiagID,
+                                            bool IsExtension = true) {
   PrevSpec = DeclSpec::getSpecifierName(TPrev);
-  DiagID = (TNew == TPrev ? diag::ext_duplicate_declspec
-            : diag::err_invalid_decl_spec_combination);
+  if (TNew != TPrev)
+    DiagID = diag::err_invalid_decl_spec_combination;
+  else
+    DiagID = IsExtension ? diag::ext_duplicate_declspec : 
+                           diag::warn_duplicate_declspec;    
   return true;
 }
 
@@ -394,6 +401,7 @@ const char *DeclSpec::getSpecifierName(DeclSpec::TST T) {
   case DeclSpec::TST_class:       return "class";
   case DeclSpec::TST_union:       return "union";
   case DeclSpec::TST_struct:      return "struct";
+  case DeclSpec::TST_interface:   return "__interface";
   case DeclSpec::TST_typename:    return "type-name";
   case DeclSpec::TST_typeofType:
   case DeclSpec::TST_typeofExpr:  return "typeof";
@@ -671,9 +679,15 @@ bool DeclSpec::SetTypeQual(TQ T, SourceLocation Loc, const char *&PrevSpec,
                            unsigned &DiagID, const LangOptions &Lang,
                            bool IsTypeSpec) {
   // Duplicates are permitted in C99, and are permitted in C++11 unless the
-  // cv-qualifier appears as a type-specifier.
-  if ((TypeQualifiers & T) && !Lang.C99 && (!Lang.CPlusPlus0x || IsTypeSpec))
-    return BadSpecifier(T, T, PrevSpec, DiagID);
+  // cv-qualifier appears as a type-specifier.  However, since this is likely 
+  // not what the user intended, we will always warn.  We do not need to set the
+  // qualifier's location since we already have it.
+  if (TypeQualifiers & T) {
+    bool IsExtension = true;
+    if (Lang.C99 || (Lang.CPlusPlus0x && !IsTypeSpec))
+      IsExtension = false;
+    return BadSpecifier(T, T, PrevSpec, DiagID, IsExtension);
+  }
   TypeQualifiers |= T;
 
   switch (T) {

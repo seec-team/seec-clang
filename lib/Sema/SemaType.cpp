@@ -554,7 +554,8 @@ static void maybeSynthesizeBlockSignature(TypeProcessingState &state,
   // ...and *prepend* it to the declarator.
   declarator.AddInnermostTypeInfo(DeclaratorChunk::getFunction(
                              /*proto*/ true,
-                             /*variadic*/ false, SourceLocation(),
+                             /*variadic*/ false,
+                             /*ambiguous*/ false, SourceLocation(),
                              /*args*/ 0, 0,
                              /*type quals*/ 0,
                              /*ref-qualifier*/true, SourceLocation(),
@@ -752,7 +753,8 @@ static QualType ConvertDeclSpecToType(TypeProcessingState &state) {
   case DeclSpec::TST_class:
   case DeclSpec::TST_enum:
   case DeclSpec::TST_union:
-  case DeclSpec::TST_struct: {
+  case DeclSpec::TST_struct:
+  case DeclSpec::TST_interface: {
     TypeDecl *D = dyn_cast_or_null<TypeDecl>(DS.getRepAsDecl());
     if (!D) {
       // This can happen in C++ with ambiguous lookups.
@@ -1084,7 +1086,7 @@ static QualType inferARCLifetimeForPointee(Sema &S, QualType type,
 
   // If we are in an unevaluated context, like sizeof, skip adding a
   // qualification.
-  } else if (S.ExprEvalContexts.back().Context == Sema::Unevaluated) {
+  } else if (S.isUnevaluatedContext()) {
     return type;
 
   // If that failed, give an error and recover using __strong.  __strong
@@ -1811,6 +1813,8 @@ static QualType GetDeclSpecTypeForDeclarator(TypeProcessingState &state,
     // Constructors and destructors don't have return types. Use
     // "void" instead.
     T = SemaRef.Context.VoidTy;
+    if (AttributeList *attrs = D.getDeclSpec().getAttributes().getList())
+      processTypeAttrs(state, T, true, attrs);
     break;
 
   case UnqualifiedId::IK_ConversionFunctionId:
@@ -1850,30 +1854,31 @@ static QualType GetDeclSpecTypeForDeclarator(TypeProcessingState &state,
       case TTK_Struct: Error = 1; /* Struct member */ break;
       case TTK_Union:  Error = 2; /* Union member */ break;
       case TTK_Class:  Error = 3; /* Class member */ break;
+      case TTK_Interface: Error = 4; /* Interface member */ break;
       }
       break;
     case Declarator::CXXCatchContext:
     case Declarator::ObjCCatchContext:
-      Error = 4; // Exception declaration
+      Error = 5; // Exception declaration
       break;
     case Declarator::TemplateParamContext:
-      Error = 5; // Template parameter
+      Error = 6; // Template parameter
       break;
     case Declarator::BlockLiteralContext:
-      Error = 6; // Block literal
+      Error = 7; // Block literal
       break;
     case Declarator::TemplateTypeArgContext:
-      Error = 7; // Template type argument
+      Error = 8; // Template type argument
       break;
     case Declarator::AliasDeclContext:
     case Declarator::AliasTemplateContext:
-      Error = 9; // Type alias
+      Error = 10; // Type alias
       break;
     case Declarator::TrailingReturnContext:
-      Error = 10; // Function return type
+      Error = 11; // Function return type
       break;
     case Declarator::TypeNameContext:
-      Error = 11; // Generic
+      Error = 12; // Generic
       break;
     case Declarator::FileContext:
     case Declarator::BlockContext:
@@ -1884,11 +1889,11 @@ static QualType GetDeclSpecTypeForDeclarator(TypeProcessingState &state,
     }
 
     if (D.getDeclSpec().getStorageClassSpec() == DeclSpec::SCS_typedef)
-      Error = 8;
+      Error = 9;
 
     // In Objective-C it is an error to use 'auto' on a function declarator.
     if (D.isFunctionDeclarator())
-      Error = 10;
+      Error = 11;
 
     // C++11 [dcl.spec.auto]p2: 'auto' is always fine if the declarator
     // contains a trailing return type. That is only legal at the outermost
@@ -2040,6 +2045,102 @@ static void checkQualifiedFunction(Sema &S, QualType T,
     << getFunctionQualifiersAsString(T->castAs<FunctionProtoType>());
 }
 
+/// Produce an approprioate diagnostic for an ambiguity between a function
+/// declarator and a C++ direct-initializer.
+static void warnAboutAmbiguousFunction(Sema &S, Declarator &D,
+                                       DeclaratorChunk &DeclType, QualType RT) {
+  const DeclaratorChunk::FunctionTypeInfo &FTI = DeclType.Fun;
+  assert(FTI.isAmbiguous && "no direct-initializer / function ambiguity");
+
+  // If the return type is void there is no ambiguity.
+  if (RT->isVoidType())
+    return;
+
+  // An initializer for a non-class type can have at most one argument.
+  if (!RT->isRecordType() && FTI.NumArgs > 1)
+    return;
+
+  // An initializer for a reference must have exactly one argument.
+  if (RT->isReferenceType() && FTI.NumArgs != 1)
+    return;
+
+  // Only warn if this declarator is declaring a function at block scope, and
+  // doesn't have a storage class (such as 'extern') specified.
+  if (!D.isFunctionDeclarator() ||
+      D.getFunctionDefinitionKind() != FDK_Declaration ||
+      !S.CurContext->isFunctionOrMethod() ||
+      D.getDeclSpec().getStorageClassSpecAsWritten()
+        != DeclSpec::SCS_unspecified)
+    return;
+
+  // Inside a condition, a direct initializer is not permitted. We allow one to
+  // be parsed in order to give better diagnostics in condition parsing.
+  if (D.getContext() == Declarator::ConditionContext)
+    return;
+
+  SourceRange ParenRange(DeclType.Loc, DeclType.EndLoc);
+
+  S.Diag(DeclType.Loc,
+         FTI.NumArgs ? diag::warn_parens_disambiguated_as_function_declaration
+                     : diag::warn_empty_parens_are_function_decl)
+    << ParenRange;
+
+  // If the declaration looks like:
+  //   T var1,
+  //   f();
+  // and name lookup finds a function named 'f', then the ',' was
+  // probably intended to be a ';'.
+  if (!D.isFirstDeclarator() && D.getIdentifier()) {
+    FullSourceLoc Comma(D.getCommaLoc(), S.SourceMgr);
+    FullSourceLoc Name(D.getIdentifierLoc(), S.SourceMgr);
+    if (Comma.getFileID() != Name.getFileID() ||
+        Comma.getSpellingLineNumber() != Name.getSpellingLineNumber()) {
+      LookupResult Result(S, D.getIdentifier(), SourceLocation(),
+                          Sema::LookupOrdinaryName);
+      if (S.LookupName(Result, S.getCurScope()))
+        S.Diag(D.getCommaLoc(), diag::note_empty_parens_function_call)
+          << FixItHint::CreateReplacement(D.getCommaLoc(), ";")
+          << D.getIdentifier();
+    }
+  }
+
+  if (FTI.NumArgs > 0) {
+    // For a declaration with parameters, eg. "T var(T());", suggest adding parens
+    // around the first parameter to turn the declaration into a variable
+    // declaration.
+    SourceRange Range = FTI.ArgInfo[0].Param->getSourceRange();
+    SourceLocation B = Range.getBegin();
+    SourceLocation E = S.PP.getLocForEndOfToken(Range.getEnd());
+    // FIXME: Maybe we should suggest adding braces instead of parens
+    // in C++11 for classes that don't have an initializer_list constructor.
+    S.Diag(B, diag::note_additional_parens_for_variable_declaration)
+      << FixItHint::CreateInsertion(B, "(")
+      << FixItHint::CreateInsertion(E, ")");
+  } else {
+    // For a declaration without parameters, eg. "T var();", suggest replacing the
+    // parens with an initializer to turn the declaration into a variable
+    // declaration.
+    const CXXRecordDecl *RD = RT->getAsCXXRecordDecl();
+
+    // Empty parens mean value-initialization, and no parens mean
+    // default initialization. These are equivalent if the default
+    // constructor is user-provided or if zero-initialization is a
+    // no-op.
+    if (RD && RD->hasDefinition() &&
+        (RD->isEmpty() || RD->hasUserProvidedDefaultConstructor()))
+      S.Diag(DeclType.Loc, diag::note_empty_parens_default_ctor)
+        << FixItHint::CreateRemoval(ParenRange);
+    else {
+      std::string Init = S.getFixItZeroInitializerForType(RT);
+      if (Init.empty() && S.LangOpts.CPlusPlus0x)
+        Init = "{}";
+      if (!Init.empty())
+        S.Diag(DeclType.Loc, diag::note_empty_parens_zero_initialize)
+          << FixItHint::CreateReplacement(ParenRange, Init);
+    }
+  }
+}
+
 static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
                                                 QualType declSpecType,
                                                 TypeSourceInfo *TInfo) {
@@ -2159,6 +2260,51 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
         ASM = ArrayType::Normal;
         D.setInvalidType(true);
       }
+
+      // C99 6.7.5.2p1: The optional type qualifiers and the keyword static
+      // shall appear only in a declaration of a function parameter with an
+      // array type, ...
+      if (ASM == ArrayType::Static || ATI.TypeQuals) {
+        if (!(D.isPrototypeContext() ||
+              D.getContext() == Declarator::KNRTypeListContext)) {
+          S.Diag(DeclType.Loc, diag::err_array_static_outside_prototype) <<
+              (ASM == ArrayType::Static ? "'static'" : "type qualifier");
+          // Remove the 'static' and the type qualifiers.
+          if (ASM == ArrayType::Static)
+            ASM = ArrayType::Normal;
+          ATI.TypeQuals = 0;
+          D.setInvalidType(true);
+        }
+
+        // C99 6.7.5.2p1: ... and then only in the outermost array type
+        // derivation.
+        unsigned x = chunkIndex;
+        while (x != 0) {
+          // Walk outwards along the declarator chunks.
+          x--;
+          const DeclaratorChunk &DC = D.getTypeObject(x);
+          switch (DC.Kind) {
+          case DeclaratorChunk::Paren:
+            continue;
+          case DeclaratorChunk::Array:
+          case DeclaratorChunk::Pointer:
+          case DeclaratorChunk::Reference:
+          case DeclaratorChunk::MemberPointer:
+            S.Diag(DeclType.Loc, diag::err_array_static_not_outermost) <<
+              (ASM == ArrayType::Static ? "'static'" : "type qualifier");
+            if (ASM == ArrayType::Static)
+              ASM = ArrayType::Normal;
+            ATI.TypeQuals = 0;
+            D.setInvalidType(true);
+            break;
+          case DeclaratorChunk::Function:
+          case DeclaratorChunk::BlockPointer:
+            // These are invalid anyway, so just ignore.
+            break;
+          }
+        }
+      }
+
       T = S.BuildArrayType(T, ASM, ArraySize, ATI.TypeQuals,
                            SourceRange(DeclType.Loc, DeclType.EndLoc), Name);
       break;
@@ -2271,6 +2417,11 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
         S.Diag(FTI.getExceptionSpecLoc(), diag::err_exception_spec_in_typedef)
           << (D.getContext() == Declarator::AliasDeclContext ||
               D.getContext() == Declarator::AliasTemplateContext);
+
+      // If we see "T var();" or "T var(T());" at block scope, it is probably
+      // an attempt to initialize a variable, not a function declaration.
+      if (FTI.isAmbiguous)
+        warnAboutAmbiguousFunction(S, D, DeclType, T);
 
       if (!FTI.NumArgs && !FTI.isVariadic && !LangOpts.CPlusPlus) {
         // Simple void foo(), where the incoming T is the result type.
@@ -3120,7 +3271,6 @@ namespace {
       assert(Chunk.Kind == DeclaratorChunk::Function);
       TL.setLocalRangeBegin(Chunk.Loc);
       TL.setLocalRangeEnd(Chunk.EndLoc);
-      TL.setTrailingReturn(Chunk.Fun.hasTrailingReturnType());
 
       const DeclaratorChunk::FunctionTypeInfo &FTI = Chunk.Fun;
       for (unsigned i = 0, e = TL.getNumArgs(), tpi = 0; i != e; ++i) {
@@ -3440,7 +3590,7 @@ static bool handleObjCOwnershipTypeAttr(TypeProcessingState &state,
 
   // Forbid __weak if the runtime doesn't support it.
   if (lifetime == Qualifiers::OCL_Weak &&
-      !S.getLangOpts().ObjCRuntimeHasWeak && !NonObjCPointer) {
+      !S.getLangOpts().ObjCARCWeak && !NonObjCPointer) {
 
     // Actually, delay this until we know what we're parsing.
     if (S.DelayedDiagnostics.shouldDelayDiagnostics()) {
@@ -3463,11 +3613,12 @@ static bool handleObjCOwnershipTypeAttr(TypeProcessingState &state,
     while (const PointerType *ptr = T->getAs<PointerType>())
       T = ptr->getPointeeType();
     if (const ObjCObjectPointerType *ObjT = T->getAs<ObjCObjectPointerType>()) {
-      ObjCInterfaceDecl *Class = ObjT->getInterfaceDecl();
-      if (Class->isArcWeakrefUnavailable()) {
-          S.Diag(AttrLoc, diag::err_arc_unsupported_weak_class);
-          S.Diag(ObjT->getInterfaceDecl()->getLocation(),
-                 diag::note_class_declared);
+      if (ObjCInterfaceDecl *Class = ObjT->getInterfaceDecl()) {
+        if (Class->isArcWeakrefUnavailable()) {
+            S.Diag(AttrLoc, diag::err_arc_unsupported_weak_class);
+            S.Diag(ObjT->getInterfaceDecl()->getLocation(),
+                   diag::note_class_declared);
+        }
       }
     }
   }
@@ -4281,6 +4432,20 @@ bool Sema::RequireCompleteType(SourceLocation Loc, QualType T,
   return RequireCompleteType(Loc, T, Diagnoser);
 }
 
+/// \brief Get diagnostic %select index for tag kind for
+/// literal type diagnostic message.
+/// WARNING: Indexes apply to particular diagnostics only!
+///
+/// \returns diagnostic %select index.
+static unsigned getLiteralDiagFromTagKind(TagTypeKind Tag) {
+  switch (Tag) {
+  case TTK_Struct: return 0;
+  case TTK_Interface: return 1;
+  case TTK_Class:  return 2;
+  default: llvm_unreachable("Invalid tag kind for literal type diagnostic!");
+  }
+}
+
 /// @brief Ensure that the type T is a literal type.
 ///
 /// This routine checks whether the type @p T is a literal type. If @p T is an
@@ -4337,7 +4502,7 @@ bool Sema::RequireLiteralType(SourceLocation Loc, QualType T,
   // of constexpr constructors.
   if (RD->getNumVBases()) {
     Diag(RD->getLocation(), diag::note_non_literal_virtual_base)
-      << RD->isStruct() << RD->getNumVBases();
+      << getLiteralDiagFromTagKind(RD->getTagKind()) << RD->getNumVBases();
     for (CXXRecordDecl::base_class_const_iterator I = RD->vbases_begin(),
            E = RD->vbases_end(); I != E; ++I)
       Diag(I->getLocStart(),
