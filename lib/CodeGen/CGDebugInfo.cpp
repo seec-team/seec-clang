@@ -157,7 +157,7 @@ StringRef CGDebugInfo::getObjCMethodName(const ObjCMethodDecl *OMD) {
       OS << OID->getName();
   } else if (const ObjCCategoryImplDecl *OCD = 
              dyn_cast<const ObjCCategoryImplDecl>(DC)){
-      OS << ((NamedDecl *)OCD)->getIdentifier()->getNameStart() << '(' <<
+      OS << ((const NamedDecl *)OCD)->getIdentifier()->getNameStart() << '(' <<
           OCD->getIdentifier()->getNameStart() << ')';
   }
   OS << ' ' << OMD->getSelector().getAsString() << ']';
@@ -1985,7 +1985,7 @@ llvm::DISubprogram CGDebugInfo::getFunctionDeclaration(const Decl *D) {
 
 // getOrCreateFunctionType - Construct DIType. If it is a c++ method, include
 // implicit parameter "this".
-llvm::DIType CGDebugInfo::getOrCreateFunctionType(const Decl * D,
+llvm::DIType CGDebugInfo::getOrCreateFunctionType(const Decl *D,
                                                   QualType FnType,
                                                   llvm::DIFile F) {
 
@@ -1998,9 +1998,11 @@ llvm::DIType CGDebugInfo::getOrCreateFunctionType(const Decl * D,
     // First element is always return type. For 'void' functions it is NULL.
     Elts.push_back(getOrCreateType(OMethod->getResultType(), F));
     // "self" pointer is always first argument.
-    Elts.push_back(getOrCreateType(OMethod->getSelfDecl()->getType(), F));
-    // "cmd" pointer is always second argument.
-    Elts.push_back(getOrCreateType(OMethod->getCmdDecl()->getType(), F));
+    llvm::DIType SelfTy = getOrCreateType(OMethod->getSelfDecl()->getType(), F);
+    Elts.push_back(DBuilder.createArtificialType(SelfTy));
+    // "_cmd" pointer is always second argument.
+    llvm::DIType CmdTy = getOrCreateType(OMethod->getCmdDecl()->getType(), F);
+    Elts.push_back(DBuilder.createArtificialType(CmdTy));
     // Get rest of the arguments.
     for (ObjCMethodDecl::param_const_iterator PI = OMethod->param_begin(), 
            PE = OMethod->param_end(); PI != PE; ++PI)

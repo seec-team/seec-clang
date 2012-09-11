@@ -385,8 +385,8 @@ public:
   void VisitCXXConstructExpr(const CXXConstructExpr *E, ExplodedNode *Pred,
                              ExplodedNodeSet &Dst);
 
-  void VisitCXXDestructor(QualType ObjectType,
-                          const MemRegion *Dest, const Stmt *S,
+  void VisitCXXDestructor(QualType ObjectType, const MemRegion *Dest,
+                          const Stmt *S, bool IsBaseDtor,
                           ExplodedNode *Pred, ExplodedNodeSet &Dst);
 
   void VisitCXXNewExpr(const CXXNewExpr *CNE, ExplodedNode *Pred,
@@ -495,6 +495,10 @@ private:
                     ExplodedNode *Pred,
                     ProgramStateRef St, SVal location,
                     const ProgramPointTag *tag, bool isLoad);
+
+  /// Count the stack depth and determine if the call is recursive.
+  void examineStackFrames(const Decl *D, const LocationContext *LCtx,
+                          bool &IsRecursive, unsigned &StackDepth);
 
   bool shouldInlineDecl(const Decl *D, ExplodedNode *Pred);
   bool inlineCall(const CallEvent &Call, const Decl *D, NodeBuilder &Bldr,
