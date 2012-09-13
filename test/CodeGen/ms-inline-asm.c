@@ -127,3 +127,40 @@ void t14(void) {
 // CHECK: t14
 // CHECK: call void asm sideeffect inteldialect "mov eax, $$1", "~{eax},~{dirflag},~{fpsr},~{flags}"() nounwind
 }
+
+void t15(void) {
+  __asm mov eax, DWORD PTR [eax]
+// CHECK: t15
+// CHECK: call void asm sideeffect inteldialect "mov eax, DWORD PTR [eax]", "~{eax},~{dirflag},~{fpsr},~{flags}"() nounwind
+}
+
+void t16(unsigned long long V) {
+  __asm mov eax, DWORD PTR [V]
+// CHECK: t16
+// CHECK: call void asm sideeffect inteldialect "mov eax, DWORD PTR [$0]", "r,~{eax},~{dirflag},~{fpsr},~{flags}"(i64 %{{.*}}) nounwind
+}
+
+void t17(void) {
+  __asm mov eax, dword ptr [eax]
+// CHECK: t17
+// CHECK: call void asm sideeffect inteldialect "mov eax, dword ptr [eax]", "~{eax},~{dirflag},~{fpsr},~{flags}"() nounwind
+}
+
+void t18(void) {
+  __asm mov dword ptr [eax], eax
+// CHECK: t18
+// CHECK: call void asm sideeffect inteldialect "mov dword ptr [eax], eax", "~{dirflag},~{fpsr},~{flags}"() nounwind
+}
+
+unsigned t19(void) {
+  unsigned i = 1, j, l = 1, m;
+  __asm {
+    mov eax, i
+    mov j, eax
+    mov eax, l
+    mov m, eax
+  }
+  return j + m;
+// CHECK: t19
+// CHECK: call { i32, i32 } asm sideeffect inteldialect "mov eax, $2\0A\09mov $0, eax\0A\09mov eax, $3\0A\09mov $1, eax", "=r,=r,r,r,~{eax},~{dirflag},~{fpsr},~{flags}"(i32 %{{.*}}, i32 %{{.*}}) nounwind
+}
