@@ -2165,6 +2165,9 @@ Sema::TemplateDeductionResult
 Sema::DeduceTemplateArguments(ClassTemplatePartialSpecializationDecl *Partial,
                               const TemplateArgumentList &TemplateArgs,
                               TemplateDeductionInfo &Info) {
+  if (Partial->isInvalidDecl())
+    return TDK_Invalid;
+
   // C++ [temp.class.spec.match]p2:
   //   A partial specialization matches a given actual template
   //   argument list if the template arguments of the partial
@@ -2788,7 +2791,7 @@ ResolveOverloadForDeduction(Sema &S, TemplateParameterList *TemplateParams,
       
       // Otherwise, see if we can resolve a function type 
       FunctionDecl *Specialization = 0;
-      TemplateDeductionInfo Info(S.Context, Ovl->getNameLoc());
+      TemplateDeductionInfo Info(Ovl->getNameLoc());
       if (S.DeduceTemplateArguments(FunTmpl, &ExplicitTemplateArgs,
                                     Specialization, Info))
         continue;
@@ -2819,7 +2822,7 @@ ResolveOverloadForDeduction(Sema &S, TemplateParameterList *TemplateParams,
     // So we do not reject deductions which were made elsewhere.
     SmallVector<DeducedTemplateArgument, 8>
       Deduced(TemplateParams->size());
-    TemplateDeductionInfo Info(S.Context, Ovl->getNameLoc());
+    TemplateDeductionInfo Info(Ovl->getNameLoc());
     Sema::TemplateDeductionResult Result
       = DeduceTemplateArgumentsByTypeMatch(S, TemplateParams, ParamType,
                                            ArgType, Info, Deduced, TDF);
@@ -3015,6 +3018,9 @@ Sema::DeduceTemplateArguments(FunctionTemplateDecl *FunctionTemplate,
                               llvm::ArrayRef<Expr *> Args,
                               FunctionDecl *&Specialization,
                               TemplateDeductionInfo &Info) {
+  if (FunctionTemplate->isInvalidDecl())
+    return TDK_Invalid;
+
   FunctionDecl *Function = FunctionTemplate->getTemplatedDecl();
 
   // C++ [temp.deduct.call]p1:
@@ -3271,6 +3277,9 @@ Sema::DeduceTemplateArguments(FunctionTemplateDecl *FunctionTemplate,
                               QualType ArgFunctionType,
                               FunctionDecl *&Specialization,
                               TemplateDeductionInfo &Info) {
+  if (FunctionTemplate->isInvalidDecl())
+    return TDK_Invalid;
+
   FunctionDecl *Function = FunctionTemplate->getTemplatedDecl();
   TemplateParameterList *TemplateParams
     = FunctionTemplate->getTemplateParameters();
@@ -3330,6 +3339,9 @@ Sema::DeduceTemplateArguments(FunctionTemplateDecl *FunctionTemplate,
                               QualType ToType,
                               CXXConversionDecl *&Specialization,
                               TemplateDeductionInfo &Info) {
+  if (FunctionTemplate->isInvalidDecl())
+    return TDK_Invalid;
+
   CXXConversionDecl *Conv
     = cast<CXXConversionDecl>(FunctionTemplate->getTemplatedDecl());
   QualType FromType = Conv->getConversionType();
@@ -3574,7 +3586,7 @@ Sema::DeduceAutoType(TypeSourceInfo *Type, Expr *&Init,
   QualType InitType = Init->getType();
   unsigned TDF = 0;
 
-  TemplateDeductionInfo Info(Context, Loc);
+  TemplateDeductionInfo Info(Loc);
 
   InitListExpr *InitList = dyn_cast<InitListExpr>(Init);
   if (InitList) {
@@ -3684,7 +3696,7 @@ static bool isAtLeastAsSpecializedAs(Sema &S,
   // C++0x [temp.deduct.partial]p3:
   //   The types used to determine the ordering depend on the context in which
   //   the partial ordering is done:
-  TemplateDeductionInfo Info(S.Context, Loc);
+  TemplateDeductionInfo Info(Loc);
   CXXMethodDecl *Method1 = 0;
   CXXMethodDecl *Method2 = 0;
   bool IsNonStatic2 = false;
@@ -4120,7 +4132,7 @@ Sema::getMoreSpecializedPartialSpecialization(
   // template partial specialization's template arguments, for
   // example.
   SmallVector<DeducedTemplateArgument, 4> Deduced;
-  TemplateDeductionInfo Info(Context, Loc);
+  TemplateDeductionInfo Info(Loc);
 
   QualType PT1 = PS1->getInjectedSpecializationType();
   QualType PT2 = PS2->getInjectedSpecializationType();
