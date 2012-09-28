@@ -219,11 +219,11 @@ void Clang::AddPreprocessingOptions(Compilation &C,
       (A = Args.getLastArg(options::OPT_MMD))) {
     // Determine the output location.
     const char *DepFile;
-    if (Output.getType() == types::TY_Dependencies) {
-      DepFile = Output.getFilename();
-    } else if (Arg *MF = Args.getLastArg(options::OPT_MF)) {
+    if (Arg *MF = Args.getLastArg(options::OPT_MF)) {
       DepFile = MF->getValue(Args);
       C.addFailureResultFile(DepFile);
+    } else if (Output.getType() == types::TY_Dependencies) {
+      DepFile = Output.getFilename();
     } else if (A->getOption().matches(options::OPT_M) ||
                A->getOption().matches(options::OPT_MM)) {
       DepFile = "-";
@@ -778,6 +778,20 @@ void Clang::AddARMTargetArgs(const ArgList &Args,
     CmdArgs.push_back("-no-implicit-float");
 }
 
+// Translate MIPS CPU name alias option to CPU name.
+static StringRef getMipsCPUFromAlias(const Arg &A) {
+  if (A.getOption().matches(options::OPT_mips32))
+    return "mips32";
+  if (A.getOption().matches(options::OPT_mips32r2))
+    return "mips32r2";
+  if (A.getOption().matches(options::OPT_mips64))
+    return "mips64";
+  if (A.getOption().matches(options::OPT_mips64r2))
+    return "mips64r2";
+  llvm_unreachable("Unexpected option");
+  return "";
+}
+
 // Get CPU and ABI names. They are not independent
 // so we have to calculate them together.
 static void getMipsCPUAndABI(const ArgList &Args,
@@ -788,8 +802,13 @@ static void getMipsCPUAndABI(const ArgList &Args,
   const char *DefMips64CPU = "mips64";
 
   if (Arg *A = Args.getLastArg(options::OPT_march_EQ,
-                               options::OPT_mcpu_EQ))
-    CPUName = A->getValue(Args);
+                               options::OPT_mcpu_EQ,
+                               options::OPT_mips_CPUs_Group)) {
+    if (A->getOption().matches(options::OPT_mips_CPUs_Group))
+      CPUName = getMipsCPUFromAlias(*A);
+    else
+      CPUName = A->getValue(Args);
+  }
 
   if (Arg *A = Args.getLastArg(options::OPT_mabi_EQ))
     ABIName = A->getValue(Args);
@@ -1591,8 +1610,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
     CmdArgs.push_back("-analyzer-eagerly-assume");
 
-    CmdArgs.push_back("-analyzer-ipa=inlining");
-
     // Add default argument set.
     if (!Args.hasArg(options::OPT__analyzer_no_default_checks)) {
       CmdArgs.push_back("-analyzer-checker=core");
@@ -1732,25 +1749,30 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // flag disables them after the flag enabling them, enable the codegen
   // optimization. This is complicated by several "umbrella" flags.
   if (Arg *A = Args.getLastArg(options::OPT_ffast_math,
+                               options::OPT_fno_fast_math,
                                options::OPT_ffinite_math_only,
                                options::OPT_fno_finite_math_only,
                                options::OPT_fhonor_infinities,
                                options::OPT_fno_honor_infinities))
-    if (A->getOption().getID() != options::OPT_fno_finite_math_only &&
+    if (A->getOption().getID() != options::OPT_fno_fast_math &&
+        A->getOption().getID() != options::OPT_fno_finite_math_only &&
         A->getOption().getID() != options::OPT_fhonor_infinities)
       CmdArgs.push_back("-menable-no-infs");
   if (Arg *A = Args.getLastArg(options::OPT_ffast_math,
+                               options::OPT_fno_fast_math,
                                options::OPT_ffinite_math_only,
                                options::OPT_fno_finite_math_only,
                                options::OPT_fhonor_nans,
                                options::OPT_fno_honor_nans))
-    if (A->getOption().getID() != options::OPT_fno_finite_math_only &&
+    if (A->getOption().getID() != options::OPT_fno_fast_math &&
+        A->getOption().getID() != options::OPT_fno_finite_math_only &&
         A->getOption().getID() != options::OPT_fhonor_nans)
       CmdArgs.push_back("-menable-no-nans");
 
   // -fmath-errno is the default on some platforms, e.g. BSD-derived OSes.
   bool MathErrno = getToolChain().IsMathErrnoDefault();
   if (Arg *A = Args.getLastArg(options::OPT_ffast_math,
+                               options::OPT_fno_fast_math,
                                options::OPT_fmath_errno,
                                options::OPT_fno_math_errno))
     MathErrno = A->getOption().getID() == options::OPT_fmath_errno;
@@ -1763,38 +1785,46 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // madness.
   bool AssociativeMath = false;
   if (Arg *A = Args.getLastArg(options::OPT_ffast_math,
+                               options::OPT_fno_fast_math,
                                options::OPT_funsafe_math_optimizations,
                                options::OPT_fno_unsafe_math_optimizations,
                                options::OPT_fassociative_math,
                                options::OPT_fno_associative_math))
-    if (A->getOption().getID() != options::OPT_fno_unsafe_math_optimizations &&
+    if (A->getOption().getID() != options::OPT_fno_fast_math &&
+        A->getOption().getID() != options::OPT_fno_unsafe_math_optimizations &&
         A->getOption().getID() != options::OPT_fno_associative_math)
       AssociativeMath = true;
   bool ReciprocalMath = false;
   if (Arg *A = Args.getLastArg(options::OPT_ffast_math,
+                               options::OPT_fno_fast_math,
                                options::OPT_funsafe_math_optimizations,
                                options::OPT_fno_unsafe_math_optimizations,
                                options::OPT_freciprocal_math,
                                options::OPT_fno_reciprocal_math))
-    if (A->getOption().getID() != options::OPT_fno_unsafe_math_optimizations &&
+    if (A->getOption().getID() != options::OPT_fno_fast_math &&
+        A->getOption().getID() != options::OPT_fno_unsafe_math_optimizations &&
         A->getOption().getID() != options::OPT_fno_reciprocal_math)
       ReciprocalMath = true;
   bool SignedZeros = true;
   if (Arg *A = Args.getLastArg(options::OPT_ffast_math,
+                               options::OPT_fno_fast_math,
                                options::OPT_funsafe_math_optimizations,
                                options::OPT_fno_unsafe_math_optimizations,
                                options::OPT_fsigned_zeros,
                                options::OPT_fno_signed_zeros))
-    if (A->getOption().getID() != options::OPT_fno_unsafe_math_optimizations &&
+    if (A->getOption().getID() != options::OPT_fno_fast_math &&
+        A->getOption().getID() != options::OPT_fno_unsafe_math_optimizations &&
         A->getOption().getID() != options::OPT_fsigned_zeros)
       SignedZeros = false;
   bool TrappingMath = true;
   if (Arg *A = Args.getLastArg(options::OPT_ffast_math,
+                               options::OPT_fno_fast_math,
                                options::OPT_funsafe_math_optimizations,
                                options::OPT_fno_unsafe_math_optimizations,
                                options::OPT_ftrapping_math,
                                options::OPT_fno_trapping_math))
-    if (A->getOption().getID() != options::OPT_fno_unsafe_math_optimizations &&
+    if (A->getOption().getID() != options::OPT_fno_fast_math &&
+        A->getOption().getID() != options::OPT_fno_unsafe_math_optimizations &&
         A->getOption().getID() != options::OPT_ftrapping_math)
       TrappingMath = false;
   if (!MathErrno && AssociativeMath && ReciprocalMath && !SignedZeros &&
@@ -1804,6 +1834,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Validate and pass through -fp-contract option. 
   if (Arg *A = Args.getLastArg(options::OPT_ffast_math,
+                               options::OPT_fno_fast_math,
                                options::OPT_ffp_contract)) {
     if (A->getOption().getID() == options::OPT_ffp_contract) {
       StringRef Val = A->getValue(Args);
@@ -1813,7 +1844,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
         D.Diag(diag::err_drv_unsupported_option_argument)
           << A->getOption().getName() << Val;
       }
-    } else { // A is OPT_ffast_math
+    } else if (A->getOption().getID() == options::OPT_ffast_math) {
       // If fast-math is set then set the fp-contract mode to fast.
       CmdArgs.push_back(Args.MakeArgString("-ffp-contract=fast"));
     }
@@ -1824,10 +1855,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // preprocessor macros. This is distinct from enabling any optimizations as
   // these options induce language changes which must survive serialization
   // and deserialization, etc.
-  if (Args.hasArg(options::OPT_ffast_math))
-    CmdArgs.push_back("-ffast-math");
-  if (Args.hasArg(options::OPT_ffinite_math_only))
-    CmdArgs.push_back("-ffinite-math-only");
+  if (Arg *A = Args.getLastArg(options::OPT_ffast_math, options::OPT_fno_fast_math))
+    if (A->getOption().matches(options::OPT_ffast_math))
+      CmdArgs.push_back("-ffast-math");
+  if (Arg *A = Args.getLastArg(options::OPT_ffinite_math_only, options::OPT_fno_fast_math))
+    if (A->getOption().matches(options::OPT_ffinite_math_only))
+      CmdArgs.push_back("-ffinite-math-only");
 
   // Decide whether to use verbose asm. Verbose assembly is the default on
   // toolchains which have the integrated assembler on by default.

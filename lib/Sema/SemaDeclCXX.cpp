@@ -373,10 +373,10 @@ void Sema::CheckExtraCXXDefaultArguments(Declarator &D) {
   }
 }
 
-// MergeCXXFunctionDecl - Merge two declarations of the same C++
-// function, once we already know that they have the same
-// type. Subroutine of MergeFunctionDecl. Returns true if there was an
-// error, false otherwise.
+/// MergeCXXFunctionDecl - Merge two declarations of the same C++
+/// function, once we already know that they have the same
+/// type. Subroutine of MergeFunctionDecl. Returns true if there was an
+/// error, false otherwise.
 bool Sema::MergeCXXFunctionDecl(FunctionDecl *New, FunctionDecl *Old,
                                 Scope *S) {
   bool Invalid = false;
@@ -1178,10 +1178,21 @@ bool Sema::AttachBaseSpecifiers(CXXRecordDecl *Class, CXXBaseSpecifier **Bases,
       // Okay, add this new base class.
       KnownBase = Bases[idx];
       Bases[NumGoodBases++] = Bases[idx];
-      if (const RecordType *Record = NewBaseType->getAs<RecordType>())
-        if (const CXXRecordDecl *RD = cast<CXXRecordDecl>(Record->getDecl()))
-          if (RD->hasAttr<WeakAttr>())
-            Class->addAttr(::new (Context) WeakAttr(SourceRange(), Context));
+      if (const RecordType *Record = NewBaseType->getAs<RecordType>()) {
+        const CXXRecordDecl *RD = cast<CXXRecordDecl>(Record->getDecl());
+        if (Class->isInterface() &&
+              (!RD->isInterface() ||
+               KnownBase->getAccessSpecifier() != AS_public)) {
+          // The Microsoft extension __interface does not permit bases that
+          // are not themselves public interfaces.
+          Diag(KnownBase->getLocStart(), diag::err_invalid_base_in_interface)
+            << getRecordDiagFromTagKind(RD->getTagKind()) << RD->getName()
+            << RD->getSourceRange();
+          Invalid = true;
+        }
+        if (RD->hasAttr<WeakAttr>())
+          Class->addAttr(::new (Context) WeakAttr(SourceRange(), Context));
+      }
     }
   }
 
@@ -1512,6 +1523,50 @@ Sema::ActOnCXXMemberDeclarator(Scope *S, AccessSpecifier AS, Declarator &D,
 
   bool isFunc = D.isDeclarationOfFunction();
 
+  if (cast<CXXRecordDecl>(CurContext)->isInterface()) {
+    // The Microsoft extension __interface only permits public member functions
+    // and prohibits constructors, destructors, operators, non-public member
+    // functions, static methods and data members.
+    unsigned InvalidDecl;
+    bool ShowDeclName = true;
+    if (!isFunc)
+      InvalidDecl = (DS.getStorageClassSpec() == DeclSpec::SCS_typedef) ? 0 : 1;
+    else if (AS != AS_public)
+      InvalidDecl = 2;
+    else if (DS.getStorageClassSpec() == DeclSpec::SCS_static)
+      InvalidDecl = 3;
+    else switch (Name.getNameKind()) {
+      case DeclarationName::CXXConstructorName:
+        InvalidDecl = 4;
+        ShowDeclName = false;
+        break;
+
+      case DeclarationName::CXXDestructorName:
+        InvalidDecl = 5;
+        ShowDeclName = false;
+        break;
+
+      case DeclarationName::CXXOperatorName:
+      case DeclarationName::CXXConversionFunctionName:
+        InvalidDecl = 6;
+        break;
+
+      default:
+        InvalidDecl = 0;
+        break;
+    }
+
+    if (InvalidDecl) {
+      if (ShowDeclName)
+        Diag(Loc, diag::err_invalid_member_in_interface)
+          << (InvalidDecl-1) << Name;
+      else
+        Diag(Loc, diag::err_invalid_member_in_interface)
+          << (InvalidDecl-1) << "";
+      return 0;
+    }
+  }
+
   // C++ 9.2p6: A member shall not be declared to have automatic storage
   // duration (auto, register) or with the extern storage-class-specifier.
   // C++ 7.1.1p8: The mutable specifier can be applied only to names of class
@@ -1717,7 +1772,7 @@ namespace {
           unsigned diag = VD->getType()->isReferenceType()
               ? diag::warn_reference_field_is_uninit
               : diag::warn_field_is_uninit;
-          S.Diag(ME->getExprLoc(), diag);
+          S.Diag(ME->getExprLoc(), diag) << ME->getMemberNameInfo().getName();
           return;
         }
       }
@@ -2965,7 +3020,11 @@ bool Sema::SetCtorInitializers(CXXConstructorDecl *Constructor,
              NumInitializers * sizeof(CXXCtorInitializer*));
       Constructor->setCtorInitializers(baseOrMemberInitializers);
     }
-    
+
+    // Let template instantiation know whether we had errors.
+    if (AnyErrors)
+      Constructor->setInvalidDecl();
+
     return false;
   }
 
@@ -3838,6 +3897,11 @@ void Sema::CheckCompletedCXXClass(CXXRecordDecl *Record) {
     if (!dtor || (!dtor->isVirtual() && dtor->getAccess() == AS_public))
       Diag(dtor ? dtor->getLocation() : Record->getLocation(),
            diag::warn_non_virtual_dtor) << Context.getRecordType(Record);
+  }
+
+  if (Record->isAbstract() && Record->hasAttr<FinalAttr>()) {
+    Diag(Record->getLocation(), diag::warn_abstract_final_class);
+    DiagnoseAbstractType(Record);
   }
 
   // See if a method overloads virtual methods in a base
@@ -9850,7 +9914,7 @@ Decl *Sema::BuildStaticAssertDeclaration(SourceLocation StaticAssertLoc,
 /// \brief Perform semantic analysis of the given friend type declaration.
 ///
 /// \returns A friend declaration that.
-FriendDecl *Sema::CheckFriendTypeDecl(SourceLocation Loc,
+FriendDecl *Sema::CheckFriendTypeDecl(SourceLocation LocStart,
                                       SourceLocation FriendLoc,
                                       TypeSourceInfo *TSInfo) {
   assert(TSInfo && "NULL TypeSourceInfo for friend type declaration");
@@ -9889,7 +9953,7 @@ FriendDecl *Sema::CheckFriendTypeDecl(SourceLocation Loc,
              diag::warn_cxx98_compat_nonclass_type_friend :
              diag::ext_nonclass_type_friend)
         << T
-        << SourceRange(FriendLoc, TypeRange.getEnd());
+        << TypeRange;
     }
   } else if (T->getAs<EnumType>()) {
     Diag(FriendLoc,
@@ -9897,18 +9961,22 @@ FriendDecl *Sema::CheckFriendTypeDecl(SourceLocation Loc,
            diag::warn_cxx98_compat_enum_friend :
            diag::ext_enum_friend)
       << T
-      << SourceRange(FriendLoc, TypeRange.getEnd());
+      << TypeRange;
   }
   
-  // C++0x [class.friend]p3:
+  // C++11 [class.friend]p3:
+  //   A friend declaration that does not declare a function shall have one
+  //   of the following forms:
+  //     friend elaborated-type-specifier ;
+  //     friend simple-type-specifier ;
+  //     friend typename-specifier ;
+  if (getLangOpts().CPlusPlus0x && LocStart != FriendLoc)
+    Diag(FriendLoc, diag::err_friend_not_first_in_declaration) << T;
+
   //   If the type specifier in a friend declaration designates a (possibly
-  //   cv-qualified) class type, that class is declared as a friend; otherwise, 
+  //   cv-qualified) class type, that class is declared as a friend; otherwise,
   //   the friend declaration is ignored.
-  
-  // FIXME: C++0x has some syntactic restrictions on friend type declarations
-  // in [class.friend]p3 that we do not implement.
-  
-  return FriendDecl::Create(Context, CurContext, Loc, TSInfo, FriendLoc);
+  return FriendDecl::Create(Context, CurContext, LocStart, TSInfo, FriendLoc);
 }
 
 /// Handle a friend tag declaration where the scope specifier was
