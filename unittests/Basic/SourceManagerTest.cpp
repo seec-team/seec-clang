@@ -10,6 +10,7 @@
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/FileManager.h"
 #include "clang/Basic/Diagnostic.h"
+#include "clang/Basic/DiagnosticOptions.h"
 #include "clang/Basic/LangOptions.h"
 #include "clang/Basic/TargetOptions.h"
 #include "clang/Basic/TargetInfo.h"
@@ -32,10 +33,11 @@ protected:
   SourceManagerTest()
     : FileMgr(FileMgrOpts),
       DiagID(new DiagnosticIDs()),
-      Diags(DiagID, new IgnoringDiagConsumer()),
-      SourceMgr(Diags, FileMgr) {
-    TargetOpts.Triple = "x86_64-apple-darwin11.1.0";
-    Target = TargetInfo::CreateTargetInfo(Diags, TargetOpts);
+      Diags(DiagID, new DiagnosticOptions, new IgnoringDiagConsumer()),
+      SourceMgr(Diags, FileMgr),
+      TargetOpts(new TargetOptions) {
+    TargetOpts->Triple = "x86_64-apple-darwin11.1.0";
+    Target = TargetInfo::CreateTargetInfo(Diags, *TargetOpts);
   }
 
   FileSystemOptions FileMgrOpts;
@@ -44,7 +46,7 @@ protected:
   DiagnosticsEngine Diags;
   SourceManager SourceMgr;
   LangOptions LangOpts;
-  TargetOptions TargetOpts;
+  IntrusiveRefCntPtr<TargetOptions> TargetOpts;
   IntrusiveRefCntPtr<TargetInfo> Target;
 };
 

@@ -149,7 +149,6 @@ public:
   unsigned visualizeExplodedGraphWithGraphViz : 1;
   unsigned visualizeExplodedGraphWithUbiGraph : 1;
   unsigned UnoptimizedCFG : 1;
-  unsigned eagerlyTrimExplodedGraph : 1;
   unsigned PrintStats : 1;
   
   /// \brief Do not re-analyze paths leading to exhausted nodes with a different
@@ -188,14 +187,21 @@ private:
   /// \sa shouldPruneNullReturnPaths
   llvm::Optional<bool> PruneNullReturnPaths;
 
+  /// \sa getGraphTrimInterval
+  llvm::Optional<unsigned> GraphTrimInterval;
+
   /// Interprets an option's string value as a boolean.
   ///
   /// Accepts the strings "true" and "false".
   /// If an option value is not provided, returns the given \p DefaultVal.
-  bool getBooleanOption(StringRef Name, bool DefaultVal) const;
+  bool getBooleanOption(StringRef Name, bool DefaultVal);
 
+  /// Variant that accepts a Optional value to cache the result.
+  bool getBooleanOption(llvm::Optional<bool> &V, StringRef Name,
+                        bool DefaultVal);
+  
   /// Interprets an option's string value as an integer value.
-  int getOptionAsInteger(llvm::StringRef Name, int DefaultVal) const;
+  int getOptionAsInteger(llvm::StringRef Name, int DefaultVal);
 
 public:
   /// Returns the option controlling which C++ member functions will be
@@ -204,30 +210,30 @@ public:
   /// This is controlled by the 'c++-inlining' config option.
   ///
   /// \sa CXXMemberInliningMode
-  bool mayInlineCXXMemberFunction(CXXInlineableMemberKind K) const;
+  bool mayInlineCXXMemberFunction(CXXInlineableMemberKind K);
 
   /// Returns true if ObjectiveC inlining is enabled, false otherwise.
-  bool mayInlineObjCMethod() const;
+  bool mayInlineObjCMethod();
 
   /// Returns whether or not the destructors for C++ temporary objects should
   /// be included in the CFG.
   ///
   /// This is controlled by the 'cfg-temporary-dtors' config option, which
   /// accepts the values "true" and "false".
-  bool includeTemporaryDtorsInCFG() const;
+  bool includeTemporaryDtorsInCFG();
 
   /// Returns whether or not C++ standard library functions may be considered
   /// for inlining.
   ///
   /// This is controlled by the 'c++-stdlib-inlining' config option, which
   /// accepts the values "true" and "false".
-  bool mayInlineCXXStandardLibrary() const;
+  bool mayInlineCXXStandardLibrary();
 
   /// Returns whether or not templated functions may be considered for inlining.
   ///
   /// This is controlled by the 'c++-template-inlining' config option, which
   /// accepts the values "true" and "false".
-  bool mayInlineTemplateFunctions() const;
+  bool mayInlineTemplateFunctions();
 
   /// Returns whether or not paths that go through null returns should be
   /// suppressed.
@@ -237,17 +243,24 @@ public:
   ///
   /// This is controlled by the 'suppress-null-return-paths' config option,
   /// which accepts the values "true" and "false".
-  bool shouldPruneNullReturnPaths() const;
+  bool shouldPruneNullReturnPaths();
 
   // Returns the size of the functions (in basic blocks), which should be
   // considered to be small enough to always inline.
   //
   // This is controlled by "ipa-always-inline-size" analyzer-config option.
-  unsigned getAlwaysInlineSize() const;
+  unsigned getAlwaysInlineSize();
   
   /// Returns true if the analyzer engine should synthesize fake bodies
   /// for well-known functions.
-  bool shouldSynthesizeBodies() const;
+  bool shouldSynthesizeBodies();
+
+  /// Returns how often nodes in the ExplodedGraph should be recycled to save
+  /// memory.
+  ///
+  /// This is controlled by the 'graph-trim-interval' config option. To disable
+  /// node reclamation, set the option to "0".
+  unsigned getGraphTrimInterval();
 
 public:
   AnalyzerOptions() : CXXMemberInliningMode() {
@@ -265,7 +278,6 @@ public:
     visualizeExplodedGraphWithGraphViz = 0;
     visualizeExplodedGraphWithUbiGraph = 0;
     UnoptimizedCFG = 0;
-    eagerlyTrimExplodedGraph = 0;
     PrintStats = 0;
     NoRetryExhausted = 0;
     // Cap the stack depth at 4 calls (5 stack frames, base + 4 calls).

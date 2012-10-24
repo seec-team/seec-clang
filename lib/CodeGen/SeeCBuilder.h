@@ -146,9 +146,11 @@ public:
   llvm::CallInst *CreateMemCpy(llvm::Value *Dst, llvm::Value *Src,
                                uint64_t Size, unsigned Align,
                                bool isVolatile = false,
-                               llvm::MDNode *TBAATag = 0) {
+                               llvm::MDNode *TBAATag = 0,
+                               llvm::MDNode *TBAAStructTag = 0) {
     llvm::CallInst *I = BaseBuilder::CreateMemCpy(Dst, Src, Size, Align,
-                                                  isVolatile, TBAATag);
+                                                  isVolatile, TBAATag,
+                                                  TBAAStructTag);
     MDInserter.attachMetadata(I);
     return I;
   }
@@ -156,9 +158,11 @@ public:
   llvm::CallInst *CreateMemCpy(llvm::Value *Dst, llvm::Value *Src,
                                llvm::Value *Size, unsigned Align,
                                bool isVolatile = false,
-                               llvm::MDNode *TBAATag = 0) {
+                               llvm::MDNode *TBAATag = 0,
+                               llvm::MDNode *TBAAStructTag = 0) {
     llvm::CallInst *I = BaseBuilder::CreateMemCpy(Dst, Src, Size, Align,
-                                                  isVolatile, TBAATag);
+                                                  isVolatile, TBAATag,
+                                                  TBAAStructTag);
     MDInserter.attachMetadata(I);
     return I;
   }
