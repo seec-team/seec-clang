@@ -216,33 +216,6 @@ public:
       return llvm::MDNode::get(Context, Operands);
     }
   };
-  
-  
-#if 0
-  /// \brief Read StmtMapping objects from metadata.
-  class MetadataReader {
-    /// The LLVMContext for the metadata this writer will create.
-    ::llvm::LLVMContext &Context;
-    
-    /// String that identifies Argument-type values.
-    llvm::MDString *ValueTypeArgument;
-    
-    /// String that identifies Instruction-type values.
-    llvm::MDString *ValueTypeInstruction;
-    
-    /// String that identifies all other Values.
-    llvm::MDString *ValueTypeValue;
-    
-  public:
-    /// \brief Construct a new MetadataWriter for the given LLVMContext.
-    MetadataWriter(::llvm::LLVMContext &ForContext)
-    : Context(ForContext),
-      ValueTypeArgument(llvm::MDString::get(Context, "argument")),
-      ValueTypeInstruction(llvm::MDString::get(Context, "instruction")),
-      ValueTypeValue(llvm::MDString::get(Context, "value"))
-    {}
-  };
-#endif
 };
 
 } // namespace clang
