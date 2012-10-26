@@ -5,10 +5,19 @@
 #ifndef CLANG_CODEGEN_SEECBUILDER_H
 #define CLANG_CODEGEN_SEECBUILDER_H
 
+#include "llvm/IRBuilder.h"
 #include "llvm/LLVMContext.h"
 #include "llvm/Metadata.h"
+#include "llvm/Module.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/IRBuilder.h"
+
+#include "clang/AST/Stmt.h"
+#include "clang/AST/Expr.h"
+#include "clang/CodeGen/SeeCMapping.h"
+
+#include "CGValue.h"
+
+#define SEEC_CLANG_DEBUG 1
 
 namespace clang {
 
@@ -16,19 +25,76 @@ namespace CodeGen {
 
 namespace seec {
 
+/// \brief Helper for adding SeeC-Clang mapping information.
+///
 class MetadataInserter
 {
 private:
+  //----------------------------------------------------------------------------
+  // Members
+  //----------------------------------------------------------------------------
+  
+  /// The llvm::Module being created.
+  llvm::Module &Module;
+  
+  /// The LLVMContext we're working with.
   llvm::LLVMContext &Context;
-  unsigned MDMapKindID;
-  llvm::SmallVector<Stmt const *, 32> StmtStack;
 
+  /// Kind of metadata we attach to llvm::Instructions.
+  unsigned MDMapKindID;
+
+  /// Stack of the current clang::Stmt pointers.
+  llvm::SmallVector<Stmt const *, 32> StmtStack;
+  
+  /// All known mappings.
+  std::vector< ::seec::clang::StmtMapping> Mappings;
+  
+  
+  //----------------------------------------------------------------------------
+  // Methods
+  //----------------------------------------------------------------------------
+
+  /// \brief Get a new MDNode, which has all the operands of Node, plus Value.
+  static llvm::MDNode *addOperand(llvm::MDNode *Node, llvm::Value *Value) {
+    llvm::SmallVector<llvm::Value *, 8> Operands;
+
+    unsigned NumOperands = Node->getNumOperands();
+
+    for (unsigned i = 0; i < NumOperands; ++i)
+      Operands.push_back(Node->getOperand(i));
+
+    Operands.push_back(Value);
+
+    return llvm::MDNode::get(Node->getContext(), Operands);
+  }
+  
 public:
-  MetadataInserter(llvm::LLVMContext &Context)
-  : Context(Context),
+  MetadataInserter(llvm::Module &TheModule)
+  : Module(TheModule),
+    Context(Module.getContext()),
     MDMapKindID(Context.getMDKindID("seec.clang.stmt.ptr")),
-    StmtStack()
-  {}
+    StmtStack(),
+    Mappings()
+  {
+    if (SEEC_CLANG_DEBUG)
+      llvm::errs() << "MetadataInserter()\n";
+  }
+  
+  ~MetadataInserter() {
+    if (SEEC_CLANG_DEBUG)
+      llvm::errs() << "~MetadataInserter()\n";
+    
+    // Creates metadata to describe StmtMapping objects.
+    ::seec::clang::StmtMapping::MetadataWriter MDWriter(Context);
+    
+    llvm::NamedMDNode *GlobalMD
+      = Module.getOrInsertNamedMetadata(::seec::clang::StmtMapping::getGlobalMDNameForMapping());
+    
+    typedef std::vector< ::seec::clang::StmtMapping>::iterator IterTy;
+    for (IterTy It = Mappings.begin(), End = Mappings.end(); It != End; ++It) {
+      GlobalMD->addOperand(MDWriter.getMetadataFor(*It));
+    }
+  }
 
   void pushStmt(Stmt const *S) {
     StmtStack.push_back(S);
@@ -45,6 +111,68 @@ public:
       llvm::Type *i64 = llvm::Type::getInt64Ty(Context);
       llvm::Value *StmtAddr = llvm::ConstantInt::get(i64, PtrInt);
       I->setMetadata(MDMapKindID, llvm::MDNode::get(Context, StmtAddr));
+    }
+  }
+
+  void markLValue(LValue const &Value, Stmt const *S) {
+    if (SEEC_CLANG_DEBUG)
+      llvm::errs() << "mark lvalue for " << S->getStmtClassName();
+    
+    if (clang::Expr const *E = llvm::dyn_cast<clang::Expr>(S)) {
+      if (SEEC_CLANG_DEBUG)
+        llvm::errs() << "  " << E->getType().getAsString() << "\n";
+    }
+
+    if (Value.isSimple()) {
+      if (llvm::Value *Addr = Value.getAddress()) {
+        Mappings.push_back(::seec::clang::StmtMapping::forLValSimple(S, Addr));
+      }
+      else {
+        if (SEEC_CLANG_DEBUG)
+          llvm::errs() << "simple: null getAddress()!\n";
+      }
+    }
+    else if (Value.isVectorElt()) {
+      if (SEEC_CLANG_DEBUG)
+        llvm::errs() << "VectorElt: not supported!\n";
+    }
+    else if (Value.isBitField()) {
+      if (SEEC_CLANG_DEBUG)
+        llvm::errs() << "BitField: not supported!\n";
+    }
+  }
+
+  void markRValue(RValue const &Value, Stmt const *S) {
+    if (SEEC_CLANG_DEBUG)
+      llvm::errs() << "mark rvalue for " << S->getStmtClassName();
+
+    if (clang::Expr const *E = llvm::dyn_cast<clang::Expr>(S)) {
+      if (SEEC_CLANG_DEBUG)
+        llvm::errs() << "  " << E->getType().getAsString() << "\n";
+    }
+
+    if (Value.isScalar()) {
+      if (llvm::Value *Val = Value.getScalarVal()) {
+        Mappings.push_back(::seec::clang::StmtMapping::forRValScalar(S, Val));
+      }
+      else {
+        if (SEEC_CLANG_DEBUG)
+          llvm::errs() << "scalar: null getScalarVal()!\n";
+      }
+    }
+    else if (Value.isComplex()) {
+      if (SEEC_CLANG_DEBUG)
+        llvm::errs() << "complex: not supported!\n";
+    }
+    else if (Value.isAggregate()) {
+      if (llvm::Value *Addr = Value.getAggregateAddr()) {
+        Mappings.push_back(::seec::clang::StmtMapping::forRValAggregate(S,
+                                                                        Addr));
+      }
+      else {
+        if (SEEC_CLANG_DEBUG)
+          llvm::errs() << "aggregate: null getAggregateAddr()!\n";
+      }
     }
   }
 };

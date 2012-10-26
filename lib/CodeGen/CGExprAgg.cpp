@@ -100,7 +100,7 @@ public:
   //===--------------------------------------------------------------------===//
 
   void Visit(Stmt *S) {
-    seec::PushStmtForScope X(CGF.MDInserter, S);
+    CodeGen::seec::PushStmtForScope X(CGF.MDInserter, S);
     StmtVisitor<AggExprEmitter>::Visit(S);
   }
 

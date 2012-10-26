@@ -2430,7 +2430,7 @@ llvm::Function *CGObjCGNU::ModuleInitFunction() {
       &TheModule);
   llvm::BasicBlock *EntryBB =
       llvm::BasicBlock::Create(VMContext, "entry", LoadFunction);
-  seec::MetadataInserter MDInserter(VMContext);
+  CodeGen::seec::MetadataInserter MDInserter(TheModule);
   CGBuilderTy Builder(VMContext, MDInserter);
   Builder.SetInsertPoint(EntryBB);
 
