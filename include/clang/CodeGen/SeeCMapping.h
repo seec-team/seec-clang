@@ -5,9 +5,12 @@
 #ifndef CLANG_CODEGEN_SEECMAPPING_H
 #define CLANG_CODEGEN_SEECBUILDER_H
 
+#include "llvm/Constants.h"
+#include "llvm/DerivedTypes.h"
 #include "llvm/LLVMContext.h"
 #include "llvm/Metadata.h"
 #include "llvm/Module.h"
+#include "llvm/Type.h"
 #include "llvm/Value.h"
 
 #include "clang/AST/Stmt.h"
@@ -99,7 +102,7 @@ public:
   /// @{
   
   static char const *getGlobalMDNameForMapping() {
-    return "seec.clang.map";
+    return "seec.clang.map.ptr";
   }
   
   /// @}

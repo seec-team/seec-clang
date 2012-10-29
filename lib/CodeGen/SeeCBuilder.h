@@ -17,7 +17,7 @@
 
 #include "CGValue.h"
 
-#define SEEC_CLANG_DEBUG 1
+#define SEEC_CLANG_DEBUG 0
 
 namespace clang {
 
@@ -115,12 +115,12 @@ public:
   }
 
   void markLValue(LValue const &Value, Stmt const *S) {
-    if (SEEC_CLANG_DEBUG)
+    if (SEEC_CLANG_DEBUG) {
       llvm::errs() << "mark lvalue for " << S->getStmtClassName();
-    
-    if (clang::Expr const *E = llvm::dyn_cast<clang::Expr>(S)) {
-      if (SEEC_CLANG_DEBUG)
-        llvm::errs() << "  " << E->getType().getAsString() << "\n";
+      if (clang::Expr const *E = llvm::dyn_cast<clang::Expr>(S)) {
+        llvm::errs() << "  " << E->getType().getAsString();
+      }
+      llvm::errs() << " @" << S << "\n";
     }
 
     if (Value.isSimple()) {
@@ -143,12 +143,12 @@ public:
   }
 
   void markRValue(RValue const &Value, Stmt const *S) {
-    if (SEEC_CLANG_DEBUG)
+    if (SEEC_CLANG_DEBUG) {
       llvm::errs() << "mark rvalue for " << S->getStmtClassName();
-
-    if (clang::Expr const *E = llvm::dyn_cast<clang::Expr>(S)) {
-      if (SEEC_CLANG_DEBUG)
-        llvm::errs() << "  " << E->getType().getAsString() << "\n";
+      if (clang::Expr const *E = llvm::dyn_cast<clang::Expr>(S)) {
+        llvm::errs() << "  " << E->getType().getAsString();
+      }
+      llvm::errs() << " @" << S << "\n";
     }
 
     if (Value.isScalar()) {
