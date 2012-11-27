@@ -642,7 +642,7 @@ EmitCompoundAssign(const CompoundAssignOperator *E,
   LValue LV = EmitCompoundAssignLValue(E, Func, Val);
 
   // The result of an assignment in C is the assigned r-value.
-  if (!CGF.getContext().getLangOpts().CPlusPlus)
+  if (!CGF.getLangOpts().CPlusPlus)
     return Val;
 
   // If the lvalue is non-volatile, return the computed value of the assignment.
@@ -677,7 +677,7 @@ ComplexPairTy ComplexExprEmitter::VisitBinAssign(const BinaryOperator *E) {
   LValue LV = EmitBinAssignLValue(E, Val);
 
   // The result of an assignment in C is the assigned r-value.
-  if (!CGF.getContext().getLangOpts().CPlusPlus)
+  if (!CGF.getLangOpts().CPlusPlus)
     return Val;
 
   // If the lvalue is non-volatile, return the computed value of the assignment.

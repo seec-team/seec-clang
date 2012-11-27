@@ -173,7 +173,7 @@ static bool hasNonTrivialDestructorOrCopyConstructor(const RecordType *RT) {
   if (!RD)
     return false;
 
-  return !RD->hasTrivialDestructor() || !RD->hasTrivialCopyConstructor();
+  return !RD->hasTrivialDestructor() || RD->hasNonTrivialCopyConstructor();
 }
 
 /// isRecordWithNonTrivialDestructorOrCopyConstructor - Determine if a type is
@@ -2684,6 +2684,11 @@ class PPC64_SVR4_ABIInfo : public DefaultABIInfo {
 public:
   PPC64_SVR4_ABIInfo(CodeGen::CodeGenTypes &CGT) : DefaultABIInfo(CGT) {}
 
+  bool isPromotableTypeForABI(QualType Ty) const;
+
+  ABIArgInfo classifyReturnType(QualType RetTy) const;
+  ABIArgInfo classifyArgumentType(QualType Ty) const;
+
   // TODO: We can add more logic to computeInfo to improve performance.
   // Example: For aggregate arguments that fit in a register, we could
   // use getDirectInReg (as is done below for structs containing a single
@@ -2744,6 +2749,59 @@ public:
 
 }
 
+// Return true if the ABI requires Ty to be passed sign- or zero-
+// extended to 64 bits.
+bool
+PPC64_SVR4_ABIInfo::isPromotableTypeForABI(QualType Ty) const {
+  // Treat an enum type as its underlying type.
+  if (const EnumType *EnumTy = Ty->getAs<EnumType>())
+    Ty = EnumTy->getDecl()->getIntegerType();
+
+  // Promotable integer types are required to be promoted by the ABI.
+  if (Ty->isPromotableIntegerType())
+    return true;
+
+  // In addition to the usual promotable integer types, we also need to
+  // extend all 32-bit types, since the ABI requires promotion to 64 bits.
+  if (const BuiltinType *BT = Ty->getAs<BuiltinType>())
+    switch (BT->getKind()) {
+    case BuiltinType::Int:
+    case BuiltinType::UInt:
+      return true;
+    default:
+      break;
+    }
+
+  return false;
+}
+
+ABIArgInfo
+PPC64_SVR4_ABIInfo::classifyArgumentType(QualType Ty) const {
+  if (isAggregateTypeForABI(Ty)) {
+    // Records with non trivial destructors/constructors should not be passed
+    // by value.
+    if (isRecordWithNonTrivialDestructorOrCopyConstructor(Ty))
+      return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
+
+    return ABIArgInfo::getIndirect(0);
+  }
+
+  return (isPromotableTypeForABI(Ty) ?
+          ABIArgInfo::getExtend() : ABIArgInfo::getDirect());
+}
+
+ABIArgInfo
+PPC64_SVR4_ABIInfo::classifyReturnType(QualType RetTy) const {
+  if (RetTy->isVoidType())
+    return ABIArgInfo::getIgnore();
+
+  if (isAggregateTypeForABI(RetTy))
+    return ABIArgInfo::getIndirect(0);
+
+  return (isPromotableTypeForABI(RetTy) ?
+          ABIArgInfo::getExtend() : ABIArgInfo::getDirect());
+}
+
 // Based on ARMABIInfo::EmitVAArg, adjusted for 64-bit machine.
 llvm::Value *PPC64_SVR4_ABIInfo::EmitVAArg(llvm::Value *VAListAddr,
                                            QualType Ty,
@@ -2754,21 +2812,6 @@ llvm::Value *PPC64_SVR4_ABIInfo::EmitVAArg(llvm::Value *VAListAddr,
   CGBuilderTy &Builder = CGF.Builder;
   llvm::Value *VAListAddrAsBPP = Builder.CreateBitCast(VAListAddr, BPP, "ap");
   llvm::Value *Addr = Builder.CreateLoad(VAListAddrAsBPP, "ap.cur");
-
-  // Handle address alignment for type alignment > 64 bits.  Although
-  // long double normally requires 16-byte alignment, this is not the
-  // case when it is passed as an argument; so handle that special case.
-  const BuiltinType *BT = Ty->getAs<BuiltinType>();
-  unsigned TyAlign = CGF.getContext().getTypeAlign(Ty) / 8;
-
-  if (TyAlign > 8 && (!BT || !BT->isFloatingPoint())) {
-    assert((TyAlign & (TyAlign - 1)) == 0 &&
-           "Alignment is not power of 2!");
-    llvm::Value *AddrAsInt = Builder.CreatePtrToInt(Addr, CGF.Int64Ty);
-    AddrAsInt = Builder.CreateAdd(AddrAsInt, Builder.getInt64(TyAlign - 1));
-    AddrAsInt = Builder.CreateAnd(AddrAsInt, Builder.getInt64(~(TyAlign - 1)));
-    Addr = Builder.CreateIntToPtr(AddrAsInt, BP);
-  }
 
   // Update the va_list pointer.
   unsigned SizeInBytes = CGF.getContext().getTypeSize(Ty) / 8;
@@ -2878,7 +2921,9 @@ private:
   ABIKind getABIKind() const { return Kind; }
 
   ABIArgInfo classifyReturnType(QualType RetTy) const;
-  ABIArgInfo classifyArgumentType(QualType RetTy) const;
+  ABIArgInfo classifyArgumentType(QualType RetTy, int *VFPRegs,
+                                  unsigned &AllocatedVFP,
+                                  bool &IsHA) const;
   bool isIllegalVectorType(QualType Ty) const;
 
   virtual void computeInfo(CGFunctionInfo &FI) const;
@@ -2922,10 +2967,33 @@ public:
 }
 
 void ARMABIInfo::computeInfo(CGFunctionInfo &FI) const {
+  // To correctly handle Homogeneous Aggregate, we need to keep track of the
+  // VFP registers allocated so far.
+  // C.1.vfp If the argument is a VFP CPRC and there are sufficient consecutive
+  // VFP registers of the appropriate type unallocated then the argument is
+  // allocated to the lowest-numbered sequence of such registers.
+  // C.2.vfp If the argument is a VFP CPRC then any VFP registers that are
+  // unallocated are marked as unavailable. 
+  unsigned AllocatedVFP = 0;
+  int VFPRegs[16] = { 0 };
   FI.getReturnInfo() = classifyReturnType(FI.getReturnType());
   for (CGFunctionInfo::arg_iterator it = FI.arg_begin(), ie = FI.arg_end();
-       it != ie; ++it)
-    it->info = classifyArgumentType(it->type);
+       it != ie; ++it) {
+    unsigned PreAllocation = AllocatedVFP;
+    bool IsHA = false;
+    // 6.1.2.3 There is one VFP co-processor register class using registers
+    // s0-s15 (d0-d7) for passing arguments.
+    const unsigned NumVFPs = 16;
+    it->info = classifyArgumentType(it->type, VFPRegs, AllocatedVFP, IsHA);
+    // If we do not have enough VFP registers for the HA, any VFP registers
+    // that are unallocated are marked as unavailable. To achieve this, we add
+    // padding of (NumVFPs - PreAllocation) floats.
+    if (IsHA && AllocatedVFP > NumVFPs && PreAllocation < NumVFPs) {
+      llvm::Type *PaddingTy = llvm::ArrayType::get(
+          llvm::Type::getFloatTy(getVMContext()), NumVFPs - PreAllocation);
+      it->info = ABIArgInfo::getExpandWithPadding(false, PaddingTy);
+    }
+  }
 
   // Always honor user-specified calling convention.
   if (FI.getCallingConvention() != llvm::CallingConv::C)
@@ -3027,7 +3095,50 @@ static bool isHomogeneousAggregate(QualType Ty, const Type *&Base,
   return (Members > 0 && Members <= 4);
 }
 
-ABIArgInfo ARMABIInfo::classifyArgumentType(QualType Ty) const {
+/// markAllocatedVFPs - update VFPRegs according to the alignment and
+/// number of VFP registers (unit is S register) requested.
+static void markAllocatedVFPs(int *VFPRegs, unsigned &AllocatedVFP,
+                              unsigned Alignment,
+                              unsigned NumRequired) {
+  // Early Exit.
+  if (AllocatedVFP >= 16)
+    return;
+  // C.1.vfp If the argument is a VFP CPRC and there are sufficient consecutive
+  // VFP registers of the appropriate type unallocated then the argument is
+  // allocated to the lowest-numbered sequence of such registers.
+  for (unsigned I = 0; I < 16; I += Alignment) {
+    bool FoundSlot = true;
+    for (unsigned J = I, JEnd = I + NumRequired; J < JEnd; J++)
+      if (J >= 16 || VFPRegs[J]) {
+         FoundSlot = false;
+         break;
+      }
+    if (FoundSlot) {
+      for (unsigned J = I, JEnd = I + NumRequired; J < JEnd; J++)
+        VFPRegs[J] = 1;
+      AllocatedVFP += NumRequired;
+      return;
+    }
+  }
+  // C.2.vfp If the argument is a VFP CPRC then any VFP registers that are
+  // unallocated are marked as unavailable.
+  for (unsigned I = 0; I < 16; I++)
+    VFPRegs[I] = 1;
+  AllocatedVFP = 17; // We do not have enough VFP registers.
+}
+
+ABIArgInfo ARMABIInfo::classifyArgumentType(QualType Ty, int *VFPRegs,
+                                            unsigned &AllocatedVFP,
+                                            bool &IsHA) const {
+  // We update number of allocated VFPs according to
+  // 6.1.2.1 The following argument types are VFP CPRCs:
+  //   A single-precision floating-point type (including promoted
+  //   half-precision types); A double-precision floating-point type;
+  //   A 64-bit or 128-bit containerized vector type; Homogeneous Aggregate
+  //   with a Base Type of a single- or double-precision floating-point type,
+  //   64-bit containerized vectors or 128-bit containerized vectors with one
+  //   to four Elements.
+
   // Handle illegal vector types here.
   if (isIllegalVectorType(Ty)) {
     uint64_t Size = getContext().getTypeSize(Ty);
@@ -3039,14 +3150,31 @@ ABIArgInfo ARMABIInfo::classifyArgumentType(QualType Ty) const {
     if (Size == 64) {
       llvm::Type *ResType = llvm::VectorType::get(
           llvm::Type::getInt32Ty(getVMContext()), 2);
+      markAllocatedVFPs(VFPRegs, AllocatedVFP, 2, 2);
       return ABIArgInfo::getDirect(ResType);
     }
     if (Size == 128) {
       llvm::Type *ResType = llvm::VectorType::get(
           llvm::Type::getInt32Ty(getVMContext()), 4);
+      markAllocatedVFPs(VFPRegs, AllocatedVFP, 4, 4);
       return ABIArgInfo::getDirect(ResType);
     }
     return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
+  }
+  // Update VFPRegs for legal vector types.
+  if (const VectorType *VT = Ty->getAs<VectorType>()) {
+    uint64_t Size = getContext().getTypeSize(VT);
+    // Size of a legal vector should be power of 2 and above 64.
+    markAllocatedVFPs(VFPRegs, AllocatedVFP, Size >= 128 ? 4 : 2, Size / 32);
+  }
+  // Update VFPRegs for floating point types.
+  if (const BuiltinType *BT = Ty->getAs<BuiltinType>()) {
+    if (BT->getKind() == BuiltinType::Half ||
+        BT->getKind() == BuiltinType::Float)
+      markAllocatedVFPs(VFPRegs, AllocatedVFP, 1, 1);
+    if (BT->getKind() == BuiltinType::Double ||
+        BT->getKind() == BuiltinType::LongDouble)
+      markAllocatedVFPs(VFPRegs, AllocatedVFP, 2, 2);
   }
 
   if (!isAggregateTypeForABI(Ty)) {
@@ -3068,18 +3196,42 @@ ABIArgInfo ARMABIInfo::classifyArgumentType(QualType Ty) const {
     return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
 
   if (getABIKind() == ARMABIInfo::AAPCS_VFP) {
-    // Homogeneous Aggregates need to be expanded.
+    // Homogeneous Aggregates need to be expanded when we can fit the aggregate
+    // into VFP registers.
     const Type *Base = 0;
-    if (isHomogeneousAggregate(Ty, Base, getContext())) {
+    uint64_t Members = 0;
+    if (isHomogeneousAggregate(Ty, Base, getContext(), &Members)) {
       assert(Base && "Base class should be set for homogeneous aggregate");
+      // Base can be a floating-point or a vector.
+      if (Base->isVectorType()) {
+        // ElementSize is in number of floats.
+        unsigned ElementSize = getContext().getTypeSize(Base) == 64 ? 2 : 4;
+        markAllocatedVFPs(VFPRegs, AllocatedVFP, ElementSize,
+                          Members * ElementSize);
+      } else if (Base->isSpecificBuiltinType(BuiltinType::Float))
+        markAllocatedVFPs(VFPRegs, AllocatedVFP, 1, Members);
+      else {
+        assert(Base->isSpecificBuiltinType(BuiltinType::Double) ||
+               Base->isSpecificBuiltinType(BuiltinType::LongDouble));
+        markAllocatedVFPs(VFPRegs, AllocatedVFP, 2, Members * 2);
+      }
+      IsHA = true;
       return ABIArgInfo::getExpand();
     }
   }
 
   // Support byval for ARM.
-  if (getContext().getTypeSizeInChars(Ty) > CharUnits::fromQuantity(64) ||
-      getContext().getTypeAlign(Ty) > 64) {
-    return ABIArgInfo::getIndirect(0, /*ByVal=*/true);
+  // The ABI alignment for APCS is 4-byte and for AAPCS at least 4-byte and at
+  // most 8-byte. We realign the indirect argument if type alignment is bigger
+  // than ABI alignment.
+  uint64_t ABIAlign = 4;
+  uint64_t TyAlign = getContext().getTypeAlign(Ty) / 8;
+  if (getABIKind() == ARMABIInfo::AAPCS_VFP ||
+      getABIKind() == ARMABIInfo::AAPCS)
+    ABIAlign = std::min(std::max(TyAlign, (uint64_t)4), (uint64_t)8);
+  if (getContext().getTypeSizeInChars(Ty) > CharUnits::fromQuantity(64)) {
+    return ABIArgInfo::getIndirect(0, /*ByVal=*/true,
+           /*Realign=*/TyAlign > ABIAlign);
   }
 
   // Otherwise, pass by coercing to a structure of the appropriate size.
@@ -3637,9 +3789,9 @@ void MSP430TargetCodeGenInfo::SetTargetAttributes(const Decl *D,
       F->addFnAttr(llvm::Attributes::NoInline);
 
       // Step 3: Emit ISR vector alias.
-      unsigned Num = attr->getNumber() + 0xffe0;
+      unsigned Num = attr->getNumber() / 2;
       new llvm::GlobalAlias(GV->getType(), llvm::Function::ExternalLinkage,
-                            "vector_" + Twine::utohexstr(Num),
+                            "__isr_" + Twine(Num),
                             GV, &M.getModule());
     }
   }
