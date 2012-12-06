@@ -15,10 +15,10 @@
 #define LLVM_CLANG_PARSE_PARSER_H
 
 #include "clang/Basic/Specifiers.h"
-#include "clang/Lex/Preprocessor.h"
 #include "clang/Lex/CodeCompletionHandler.h"
-#include "clang/Sema/Sema.h"
+#include "clang/Lex/Preprocessor.h"
 #include "clang/Sema/DeclSpec.h"
+#include "clang/Sema/Sema.h"
 #include "llvm/ADT/OwningPtr.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Compiler.h"
@@ -43,15 +43,6 @@ namespace clang {
   class InMessageExpressionRAIIObject;
   class PoisonSEHIdentifiersRAIIObject;
   class VersionTuple;
-
-/// PrettyStackTraceParserEntry - If a crash happens while the parser is active,
-/// an entry is printed for it.
-class PrettyStackTraceParserEntry : public llvm::PrettyStackTraceEntry {
-  const Parser &P;
-public:
-  PrettyStackTraceParserEntry(const Parser &p) : P(p) {}
-  virtual void print(raw_ostream &OS) const;
-};
 
 /// PrecedenceLevels - These are precedences for the binary/ternary
 /// operators in the C99 grammar.  These have been named to relate

@@ -13,16 +13,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/Sema/SemaInternal.h"
-#include "clang/Sema/DeclSpec.h"
-#include "clang/Sema/Initialization.h"
-#include "clang/Sema/Lookup.h"
-#include "clang/Sema/ParsedTemplate.h"
-#include "clang/Sema/ScopeInfo.h"
-#include "clang/Sema/Scope.h"
-#include "clang/Sema/TemplateDeduction.h"
+#include "TypeLocBuilder.h"
 #include "clang/AST/ASTContext.h"
-#include "clang/AST/CharUnits.h"
 #include "clang/AST/CXXInheritance.h"
+#include "clang/AST/CharUnits.h"
 #include "clang/AST/DeclObjC.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/ExprObjC.h"
@@ -30,7 +24,13 @@
 #include "clang/Basic/PartialDiagnostic.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Lex/Preprocessor.h"
-#include "TypeLocBuilder.h"
+#include "clang/Sema/DeclSpec.h"
+#include "clang/Sema/Initialization.h"
+#include "clang/Sema/Lookup.h"
+#include "clang/Sema/ParsedTemplate.h"
+#include "clang/Sema/Scope.h"
+#include "clang/Sema/ScopeInfo.h"
+#include "clang/Sema/TemplateDeduction.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -2037,9 +2037,11 @@ Sema::ActOnCXXDelete(SourceLocation StartLoc, bool UseGlobal,
       SmallVector<CXXConversionDecl*, 4> ObjectPtrConversions;
 
       CXXRecordDecl *RD = cast<CXXRecordDecl>(Record->getDecl());
-      const UnresolvedSetImpl *Conversions = RD->getVisibleConversionFunctions();
-      for (UnresolvedSetImpl::iterator I = Conversions->begin(),
-             E = Conversions->end(); I != E; ++I) {
+      std::pair<CXXRecordDecl::conversion_iterator,
+                CXXRecordDecl::conversion_iterator>
+        Conversions = RD->getVisibleConversionFunctions();
+      for (CXXRecordDecl::conversion_iterator
+             I = Conversions.first, E = Conversions.second; I != E; ++I) {
         NamedDecl *D = I.getDecl();
         if (isa<UsingShadowDecl>(D))
           D = cast<UsingShadowDecl>(D)->getTargetDecl();

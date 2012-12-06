@@ -10,14 +10,12 @@
 #ifndef CLANG_LIB_DRIVER_TOOLCHAINS_H_
 #define CLANG_LIB_DRIVER_TOOLCHAINS_H_
 
+#include "Tools.h"
+#include "clang/Basic/VersionTuple.h"
 #include "clang/Driver/Action.h"
 #include "clang/Driver/ToolChain.h"
-
-#include "clang/Basic/VersionTuple.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/Support/Compiler.h"
-
-#include "Tools.h"
 
 namespace clang {
 namespace driver {
@@ -394,7 +392,7 @@ public:
   std::string ComputeEffectiveClangTriple(const ArgList &Args,
                                           types::ID InputType) const;
 
-  virtual bool isPICDefault() const { return false; };
+  virtual bool isPICDefault() const { return false; }
 };
 
 class LLVM_LIBRARY_VISIBILITY Generic_ELF : public Generic_GCC {

@@ -8,7 +8,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "ToolChains.h"
-
+#include "SanitizerArgs.h"
+#include "clang/Basic/ObjCRuntime.h"
+#include "clang/Basic/Version.h"
 #include "clang/Driver/Arg.h"
 #include "clang/Driver/ArgList.h"
 #include "clang/Driver/Compilation.h"
@@ -17,25 +19,22 @@
 #include "clang/Driver/OptTable.h"
 #include "clang/Driver/Option.h"
 #include "clang/Driver/Options.h"
-#include "clang/Basic/ObjCRuntime.h"
-#include "clang/Basic/Version.h"
-
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/system_error.h"
 
-#include "SanitizerArgs.h"
+// FIXME: This needs to be listed last until we fix the broken include guards
+// in these files and the LLVM config.h files.
+#include "clang/Config/config.h" // for GCC_INSTALL_PREFIX
 
 #include <cstdlib> // ::getenv
-
-#include "clang/Config/config.h" // for GCC_INSTALL_PREFIX
 
 using namespace clang::driver;
 using namespace clang::driver::toolchains;

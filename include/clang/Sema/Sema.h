@@ -15,27 +15,30 @@
 #ifndef LLVM_CLANG_SEMA_SEMA_H
 #define LLVM_CLANG_SEMA_SEMA_H
 
-#include "clang/Sema/Ownership.h"
-#include "clang/Sema/AnalysisBasedWarnings.h"
-#include "clang/Sema/IdentifierResolver.h"
-#include "clang/Sema/ObjCMethodList.h"
-#include "clang/Sema/DeclSpec.h"
-#include "clang/Sema/ExternalSemaSource.h"
-#include "clang/Sema/LocInfoType.h"
-#include "clang/Sema/TypoCorrection.h"
-#include "clang/Sema/Weak.h"
+#include "clang/AST/Attr.h"
+#include "clang/AST/DeclarationName.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprObjC.h"
-#include "clang/AST/DeclarationName.h"
 #include "clang/AST/ExternalASTSource.h"
 #include "clang/AST/LambdaMangleContext.h"
-#include "clang/AST/TypeLoc.h"
 #include "clang/AST/NSAPI.h"
-#include "clang/Lex/ModuleLoader.h"
+#include "clang/AST/PrettyPrinter.h"
+#include "clang/AST/TypeLoc.h"
+#include "clang/Basic/ExpressionTraits.h"
+#include "clang/Basic/LangOptions.h"
 #include "clang/Basic/Specifiers.h"
 #include "clang/Basic/TemplateKinds.h"
 #include "clang/Basic/TypeTraits.h"
-#include "clang/Basic/ExpressionTraits.h"
+#include "clang/Lex/ModuleLoader.h"
+#include "clang/Sema/AnalysisBasedWarnings.h"
+#include "clang/Sema/DeclSpec.h"
+#include "clang/Sema/ExternalSemaSource.h"
+#include "clang/Sema/IdentifierResolver.h"
+#include "clang/Sema/LocInfoType.h"
+#include "clang/Sema/ObjCMethodList.h"
+#include "clang/Sema/Ownership.h"
+#include "clang/Sema/TypoCorrection.h"
+#include "clang/Sema/Weak.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/OwningPtr.h"
@@ -745,6 +748,24 @@ public:
   /// of -Wselector.
   llvm::DenseMap<Selector, SourceLocation> ReferencedSelectors;
 
+  /// Kinds of C++ special members.
+  enum CXXSpecialMember {
+    CXXDefaultConstructor,
+    CXXCopyConstructor,
+    CXXMoveConstructor,
+    CXXCopyAssignment,
+    CXXMoveAssignment,
+    CXXDestructor,
+    CXXInvalid
+  };
+
+  typedef std::pair<CXXRecordDecl*, CXXSpecialMember> SpecialMemberDecl;
+
+  /// The C++ special members which we are currently in the process of
+  /// declaring. If this process recursively triggers the declaration of the
+  /// same special member, we should act as if it is not yet declared.
+  llvm::SmallSet<SpecialMemberDecl, 4> SpecialMembersBeingDeclared;
+
   void ReadMethodPool(Selector Sel);
 
   /// Private Helper predicate to check for 'self'.
@@ -939,7 +960,7 @@ public:
   CanThrowResult canThrow(const Expr *E);
   const FunctionProtoType *ResolveExceptionSpec(SourceLocation Loc,
                                                 const FunctionProtoType *FPT);
-  bool CheckSpecifiedExceptionType(QualType T, const SourceRange &Range);
+  bool CheckSpecifiedExceptionType(QualType &T, const SourceRange &Range);
   bool CheckDistantExceptionSpec(QualType T);
   bool CheckEquivalentExceptionSpec(FunctionDecl *Old, FunctionDecl *New);
   bool CheckEquivalentExceptionSpec(
@@ -1507,15 +1528,6 @@ public:
                             AccessSpecifier AS, NamedDecl *PrevDecl,
                             Declarator *D = 0);
 
-  enum CXXSpecialMember {
-    CXXDefaultConstructor,
-    CXXCopyConstructor,
-    CXXMoveConstructor,
-    CXXCopyAssignment,
-    CXXMoveAssignment,
-    CXXDestructor,
-    CXXInvalid
-  };
   bool CheckNontrivialField(FieldDecl *FD);
   void DiagnoseNontrivial(const RecordType* Record, CXXSpecialMember mem);
   CXXSpecialMember getSpecialMember(const CXXMethodDecl *MD);

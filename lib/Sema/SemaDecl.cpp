@@ -12,15 +12,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/Sema/SemaInternal.h"
-#include "clang/Sema/Initialization.h"
-#include "clang/Sema/Lookup.h"
-#include "clang/Sema/CXXFieldCollector.h"
-#include "clang/Sema/Scope.h"
-#include "clang/Sema/ScopeInfo.h"
 #include "TypeLocBuilder.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/CXXInheritance.h"
+#include "clang/AST/CharUnits.h"
 #include "clang/AST/CommentDiagnostic.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclObjC.h"
@@ -28,18 +24,21 @@
 #include "clang/AST/EvaluatedExprVisitor.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/StmtCXX.h"
-#include "clang/AST/CharUnits.h"
-#include "clang/Sema/DeclSpec.h"
-#include "clang/Sema/ParsedTemplate.h"
-#include "clang/Parse/ParseDiagnostic.h"
 #include "clang/Basic/PartialDiagnostic.h"
-#include "clang/Sema/DelayedDiagnostic.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
-// FIXME: layering (ideally, Sema shouldn't be dependent on Lex API's)
-#include "clang/Lex/Preprocessor.h"
-#include "clang/Lex/HeaderSearch.h"
-#include "clang/Lex/ModuleLoader.h"
+#include "clang/Lex/HeaderSearch.h" // FIXME: Sema shouldn't depend on Lex
+#include "clang/Lex/ModuleLoader.h" // FIXME: Sema shouldn't depend on Lex
+#include "clang/Lex/Preprocessor.h" // FIXME: Sema shouldn't depend on Lex
+#include "clang/Parse/ParseDiagnostic.h"
+#include "clang/Sema/CXXFieldCollector.h"
+#include "clang/Sema/DeclSpec.h"
+#include "clang/Sema/DelayedDiagnostic.h"
+#include "clang/Sema/Initialization.h"
+#include "clang/Sema/Lookup.h"
+#include "clang/Sema/ParsedTemplate.h"
+#include "clang/Sema/Scope.h"
+#include "clang/Sema/ScopeInfo.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/Triple.h"
 #include <algorithm>
@@ -2401,6 +2400,12 @@ bool Sema::MergeCompatibleFunctionDecls(FunctionDecl *New, FunctionDecl *Old,
 
   if (getLangOpts().CPlusPlus)
     return MergeCXXFunctionDecl(New, Old, S);
+
+  // Merge the function types so the we get the composite types for the return
+  // and argument types.
+  QualType Merged = Context.mergeTypes(Old->getType(), New->getType());
+  if (!Merged.isNull())
+    New->setType(Merged);
 
   return false;
 }
@@ -7993,6 +7998,9 @@ void Sema::computeNRVO(Stmt *Body, FunctionScopeInfo *Scope) {
 }
 
 bool Sema::canSkipFunctionBody(Decl *D) {
+  if (!Consumer.shouldSkipFunctionBody(D))
+    return false;
+
   if (isa<ObjCMethodDecl>(D))
     return true;
 
@@ -9291,7 +9299,9 @@ CreateNewDecl:
   AddPushedVisibilityAttribute(New);
 
   OwnedDecl = true;
-  return New;
+  // In C++, don't return an invalid declaration. We can't recover well from
+  // the cases where we make the type anonymous.
+  return (Invalid && getLangOpts().CPlusPlus) ? 0 : New;
 }
 
 void Sema::ActOnTagStartDefinition(Scope *S, Decl *TagD) {
@@ -10366,10 +10376,10 @@ void Sema::ActOnFields(Scope* S,
     if (CXXRecordDecl *CXXRecord = dyn_cast<CXXRecordDecl>(Record)) {
       if (!CXXRecord->isInvalidDecl()) {
         // Set access bits correctly on the directly-declared conversions.
-        UnresolvedSetImpl *Convs = CXXRecord->getConversionFunctions();
-        for (UnresolvedSetIterator I = Convs->begin(), E = Convs->end(); 
-             I != E; ++I)
-          Convs->setAccess(I, (*I)->getAccess());
+        for (CXXRecordDecl::conversion_iterator
+               I = CXXRecord->conversion_begin(),
+               E = CXXRecord->conversion_end(); I != E; ++I)
+          I.setAccess((*I)->getAccess());
         
         if (!CXXRecord->isDependentType()) {
           // Adjust user-defined destructor exception spec.
