@@ -57,6 +57,7 @@ FormatStyle getLLVMStyle() {
   LLVMStyle.PointerAndReferenceBindToType = false;
   LLVMStyle.AccessModifierOffset = -2;
   LLVMStyle.SplitTemplateClosingGreater = true;
+  LLVMStyle.IndentCaseLabels = false;
   return LLVMStyle;
 }
 
@@ -67,6 +68,7 @@ FormatStyle getGoogleStyle() {
   GoogleStyle.PointerAndReferenceBindToType = true;
   GoogleStyle.AccessModifierOffset = -1;
   GoogleStyle.SplitTemplateClosingGreater = false;
+  GoogleStyle.IndentCaseLabels = true;
   return GoogleStyle;
 }
 
@@ -92,16 +94,21 @@ public:
   }
 
   void format() {
+    // Format first token and initialize indent.
     unsigned Indent = formatFirstToken();
+
+    // Initialize state dependent on indent.
     IndentState State;
-    State.Column = Indent + Line.Tokens[0].Tok.getLength();
+    State.Column = Indent;
     State.CtorInitializerOnNewLine = false;
     State.InCtorInitializer = false;
-    State.ConsumedTokens = 1;
-
-    //State.UsedIndent.push_back(Line.Level * 2);
+    State.ConsumedTokens = 0;
     State.Indent.push_back(Indent + 4);
     State.LastSpace.push_back(Indent);
+    State.FirstLessLess.push_back(0);
+
+    // The first token has already been indented and thus consumed.
+    moveStateToNextToken(State);
 
     // Start iterating at 1 as we have correctly formatted of Token #0 above.
     for (unsigned i = 1, n = Line.Tokens.size(); i != n; ++i) {
@@ -126,7 +133,18 @@ private:
     /// indented.
     std::vector<unsigned> Indent;
 
+    /// \brief The position of the last space on each level.
+    ///
+    /// Used e.g. to break like:
+    /// functionCall(Parameter, otherCall(
+    ///                             OtherParameter));
     std::vector<unsigned> LastSpace;
+
+    /// \brief The position the first "<<" operator encountered on each level.
+    ///
+    /// Used to align "<<" operators. 0 if no such operator has been encountered
+    /// on a level.
+    std::vector<unsigned> FirstLessLess;
 
     bool CtorInitializerOnNewLine;
     bool InCtorInitializer;
@@ -148,6 +166,12 @@ private:
       for (int i = 0, e = LastSpace.size(); i != e; ++i) {
         if (Other.LastSpace[i] != LastSpace[i])
           return Other.LastSpace[i] > LastSpace[i];
+      }
+      if (Other.FirstLessLess.size() != FirstLessLess.size())
+        return Other.FirstLessLess.size() > FirstLessLess.size();
+      for (int i = 0, e = FirstLessLess.size(); i != e; ++i) {
+        if (Other.FirstLessLess[i] != FirstLessLess[i])
+          return Other.FirstLessLess[i] > FirstLessLess[i];
       }
       return false;
     }
@@ -171,6 +195,9 @@ private:
       if (Current.Tok.is(tok::string_literal) &&
           Previous.Tok.is(tok::string_literal))
         State.Column = State.Column - Previous.Tok.getLength();
+      else if (Current.Tok.is(tok::lessless) &&
+               State.FirstLessLess[ParenLevel] != 0)
+        State.Column = State.FirstLessLess[ParenLevel];
       else if (Previous.Tok.is(tok::equal) && ParenLevel != 0)
         // Indent and extra 4 spaces after '=' as it continues an expression.
         // Don't do that on the top level, as we already indent 4 there.
@@ -181,7 +208,6 @@ private:
       if (!DryRun)
         replaceWhitespace(Current, 1, State.Column);
 
-      State.Column += Current.Tok.getLength();
       State.LastSpace[ParenLevel] = State.Indent[ParenLevel];
       if (Current.Tok.is(tok::colon) &&
           Annotations[Index].Type != TokenAnnotation::TT_ConditionalExpr) {
@@ -205,9 +231,9 @@ private:
         State.InCtorInitializer = true;
       }
       // Top-level spaces are exempt as that mostly leads to better results.
+      State.Column += Spaces;
       if (Spaces > 0 && ParenLevel != 0)
-        State.LastSpace[ParenLevel] = State.Column + Spaces;
-      State.Column += Current.Tok.getLength() + Spaces;
+        State.LastSpace[ParenLevel] = State.Column;
     }
     moveStateToNextToken(State);
   }
@@ -217,6 +243,12 @@ private:
   void moveStateToNextToken(IndentState &State) {
     unsigned Index = State.ConsumedTokens;
     const FormatToken &Current = Line.Tokens[Index];
+    unsigned ParenLevel = State.Indent.size() - 1;
+
+    if (Current.Tok.is(tok::lessless) && State.FirstLessLess[ParenLevel] == 0)
+      State.FirstLessLess[ParenLevel] = State.Column;
+
+    State.Column += Current.Tok.getLength();
 
     // If we encounter an opening (, [ or <, we add a level to our stacks to
     // prepare for the following tokens.
@@ -224,6 +256,7 @@ private:
         Annotations[Index].Type == TokenAnnotation::TT_TemplateOpener) {
       State.Indent.push_back(4 + State.LastSpace.back());
       State.LastSpace.push_back(State.LastSpace.back());
+      State.FirstLessLess.push_back(0);
     }
 
     // If we encounter a closing ), ] or >, we can remove a level from our
@@ -232,6 +265,7 @@ private:
         Annotations[Index].Type == TokenAnnotation::TT_TemplateCloser) {
       State.Indent.pop_back();
       State.LastSpace.pop_back();
+      State.FirstLessLess.pop_back();
     }
 
     ++State.ConsumedTokens;
@@ -586,12 +620,24 @@ private:
 
   bool isUnaryOperator(unsigned Index) {
     const Token &Tok = Line.Tokens[Index].Tok;
+
+    // '++', '--' and '!' are always unary operators.
+    if (Tok.is(tok::minusminus) || Tok.is(tok::plusplus) ||
+        Tok.is(tok::exclaim))
+      return true;
+
+    // The other possible unary operators are '+' and '-' as we
+    // determine the usage of '*' and '&' in determineStarAmpUsage().
     if (Tok.isNot(tok::minus) && Tok.isNot(tok::plus))
       return false;
+
+    // Use heuristics to recognize unary operators.
     const Token &PreviousTok = Line.Tokens[Index - 1].Tok;
     if (PreviousTok.is(tok::equal) || PreviousTok.is(tok::l_paren) ||
         PreviousTok.is(tok::comma) || PreviousTok.is(tok::l_square))
       return true;
+
+    // Fall back to marking the token as binary operator.
     return Annotations[Index - 1].Type == TokenAnnotation::TT_BinaryOperator;
   }
 
@@ -650,16 +696,20 @@ private:
       return false;
     if (Left.is(tok::less) || Right.is(tok::greater) || Right.is(tok::less))
       return false;
+    if (Right.is(tok::amp) || Right.is(tok::star))
+      return Left.isLiteral() ||
+          (Left.isNot(tok::star) && Left.isNot(tok::amp) &&
+           !Style.PointerAndReferenceBindToType);
     if (Left.is(tok::amp) || Left.is(tok::star))
       return Right.isLiteral() || Style.PointerAndReferenceBindToType;
     if (Right.is(tok::star) && Left.is(tok::l_paren))
       return false;
-    if (Right.is(tok::amp) || Right.is(tok::star))
-      return Left.isLiteral() || !Style.PointerAndReferenceBindToType;
     if (Left.is(tok::l_square) || Right.is(tok::l_square) ||
         Right.is(tok::r_square))
       return false;
-    if (Left.is(tok::coloncolon) || Right.is(tok::coloncolon))
+    if (Left.is(tok::coloncolon) ||
+        (Right.is(tok::coloncolon) &&
+         (Left.is(tok::identifier) || Left.is(tok::greater))))
       return false;
     if (Left.is(tok::period) || Right.is(tok::period))
       return false;
@@ -687,6 +737,8 @@ private:
       return false;
     if (isBinaryOperator(Left))
       return true;
+    if (Right.Tok.is(tok::lessless))
+      return true;
     return Right.Tok.is(tok::colon) || Left.Tok.is(tok::comma) ||
         Left.Tok.is(tok::semi) || Left.Tok.is(tok::equal) ||
         Left.Tok.is(tok::ampamp) || Left.Tok.is(tok::pipepipe) ||
@@ -697,6 +749,67 @@ private:
   FormatStyle Style;
   SourceManager &SourceMgr;
   std::vector<TokenAnnotation> Annotations;
+};
+
+class LexerBasedFormatTokenSource : public FormatTokenSource {
+public:
+  LexerBasedFormatTokenSource(Lexer &Lex, SourceManager &SourceMgr)
+      : GreaterStashed(false),
+        Lex(Lex),
+        SourceMgr(SourceMgr),
+        IdentTable(Lex.getLangOpts()) {
+    Lex.SetKeepWhitespaceMode(true);
+  }
+
+  virtual FormatToken getNextToken() {
+    if (GreaterStashed) {
+      FormatTok.NewlinesBefore = 0;
+      FormatTok.WhiteSpaceStart =
+          FormatTok.Tok.getLocation().getLocWithOffset(1);
+      FormatTok.WhiteSpaceLength = 0;
+      GreaterStashed = false;
+      return FormatTok;
+    }
+
+    FormatTok = FormatToken();
+    Lex.LexFromRawLexer(FormatTok.Tok);
+    FormatTok.WhiteSpaceStart = FormatTok.Tok.getLocation();
+
+    // Consume and record whitespace until we find a significant token.
+    while (FormatTok.Tok.is(tok::unknown)) {
+      FormatTok.NewlinesBefore += tokenText(FormatTok.Tok).count('\n');
+      FormatTok.WhiteSpaceLength += FormatTok.Tok.getLength();
+
+      if (FormatTok.Tok.is(tok::eof))
+        return FormatTok;
+      Lex.LexFromRawLexer(FormatTok.Tok);
+    }
+
+    if (FormatTok.Tok.is(tok::raw_identifier)) {
+      const IdentifierInfo &Info = IdentTable.get(tokenText(FormatTok.Tok));
+      FormatTok.Tok.setKind(Info.getTokenID());
+    }
+
+    if (FormatTok.Tok.is(tok::greatergreater)) {
+      FormatTok.Tok.setKind(tok::greater);
+      GreaterStashed = true;
+    }
+
+    return FormatTok;
+  }
+
+private:
+  FormatToken FormatTok;
+  bool GreaterStashed;
+  Lexer &Lex;
+  SourceManager &SourceMgr;
+  IdentifierTable IdentTable;
+
+  /// Returns the text of \c FormatTok.
+  StringRef tokenText(Token &Tok) {
+    return StringRef(SourceMgr.getCharacterData(Tok.getLocation()),
+                     Tok.getLength());
+  }
 };
 
 class Formatter : public UnwrappedLineConsumer {
@@ -714,7 +827,8 @@ public:
   }
 
   tooling::Replacements format() {
-    UnwrappedLineParser Parser(Lex, SourceMgr, *this);
+    LexerBasedFormatTokenSource Tokens(Lex, SourceMgr);
+    UnwrappedLineParser Parser(Style, Tokens, *this);
     StructuralError = Parser.parse();
     for (std::vector<UnwrappedLine>::iterator I = UnwrappedLines.begin(),
                                               E = UnwrappedLines.end();
