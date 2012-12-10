@@ -10,6 +10,7 @@
 #include "llvm/Metadata.h"
 #include "llvm/Module.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include "clang/AST/Stmt.h"
 #include "clang/AST/Expr.h"
