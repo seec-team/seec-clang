@@ -47,8 +47,11 @@ private:
   /// Stack of the current clang::Stmt pointers.
   llvm::SmallVector<Stmt const *, 32> StmtStack;
   
-  /// All known mappings.
-  std::vector< ::seec::clang::StmtMapping> Mappings;
+  /// Creates metadata to describe statement mappings.
+  ::seec::clang::StmtMapping::MetadataWriter MDWriter;
+  
+  /// Metadata for all known mappings.
+  std::vector< ::llvm::MDNode *> MDMappings;
   
   
   //----------------------------------------------------------------------------
@@ -75,7 +78,8 @@ public:
     Context(Module.getContext()),
     MDMapKindID(Context.getMDKindID("seec.clang.stmt.ptr")),
     StmtStack(),
-    Mappings()
+    MDWriter(Context),
+    MDMappings()
   {
     if (SEEC_CLANG_DEBUG)
       llvm::errs() << "MetadataInserter()\n";
@@ -85,15 +89,14 @@ public:
     if (SEEC_CLANG_DEBUG)
       llvm::errs() << "~MetadataInserter()\n";
     
-    // Creates metadata to describe StmtMapping objects.
-    ::seec::clang::StmtMapping::MetadataWriter MDWriter(Context);
-    
     llvm::NamedMDNode *GlobalMD
-      = Module.getOrInsertNamedMetadata(::seec::clang::StmtMapping::getGlobalMDNameForMapping());
+      = Module.getOrInsertNamedMetadata(
+        ::seec::clang::StmtMapping::getGlobalMDNameForMapping());
     
-    typedef std::vector< ::seec::clang::StmtMapping>::iterator IterTy;
-    for (IterTy It = Mappings.begin(), End = Mappings.end(); It != End; ++It) {
-      GlobalMD->addOperand(MDWriter.getMetadataFor(*It));
+    typedef std::vector< ::llvm::MDNode *>::iterator IterTy;
+    for (IterTy It = MDMappings.begin(), End = MDMappings.end();
+         It != End; ++It) {
+      GlobalMD->addOperand(*It);
     }
   }
 
@@ -126,7 +129,9 @@ public:
 
     if (Value.isSimple()) {
       if (llvm::Value *Addr = Value.getAddress()) {
-        Mappings.push_back(::seec::clang::StmtMapping::forLValSimple(S, Addr));
+        MDMappings.push_back(
+          MDWriter.getMetadataFor(
+            ::seec::clang::StmtMapping::forLValSimple(S, Addr)));
       }
       else {
         if (SEEC_CLANG_DEBUG)
@@ -154,7 +159,9 @@ public:
 
     if (Value.isScalar()) {
       if (llvm::Value *Val = Value.getScalarVal()) {
-        Mappings.push_back(::seec::clang::StmtMapping::forRValScalar(S, Val));
+        MDMappings.push_back(
+          MDWriter.getMetadataFor(
+            ::seec::clang::StmtMapping::forRValScalar(S, Val)));
       }
       else {
         if (SEEC_CLANG_DEBUG)
@@ -167,8 +174,9 @@ public:
     }
     else if (Value.isAggregate()) {
       if (llvm::Value *Addr = Value.getAggregateAddr()) {
-        Mappings.push_back(::seec::clang::StmtMapping::forRValAggregate(S,
-                                                                        Addr));
+        MDMappings.push_back(
+          MDWriter.getMetadataFor(
+            ::seec::clang::StmtMapping::forRValAggregate(S, Addr)));
       }
       else {
         if (SEEC_CLANG_DEBUG)
