@@ -628,8 +628,8 @@ ProgramStateRef MallocChecker::FreeMemAux(CheckerContext &C,
 
 /// Checks if the previous call to free on the given symbol failed - if free
 /// failed, returns true. Also, returns the corresponding return value symbol.
-static bool didPreviousFreeFail(ProgramStateRef State,
-                                SymbolRef Sym, SymbolRef &RetStatusSymbol) {
+bool didPreviousFreeFail(ProgramStateRef State,
+                         SymbolRef Sym, SymbolRef &RetStatusSymbol) {
   const SymbolRef *Ret = State->get<FreeReturnValue>(Sym);
   if (Ret) {
     assert(*Ret && "We should not store the null return symbol");

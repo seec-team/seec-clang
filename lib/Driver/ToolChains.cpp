@@ -193,11 +193,13 @@ Tool &Darwin::SelectTool(const Compilation &C, const JobAction &JA,
     case Action::BindArchClass:
       llvm_unreachable("Invalid tool kind.");
     case Action::PreprocessJobClass:
+      T = new tools::darwin::Preprocess(*this); break;
     case Action::AnalyzeJobClass:
     case Action::MigrateJobClass:
+      T = new tools::Clang(*this); break;
     case Action::PrecompileJobClass:
     case Action::CompileJobClass:
-      T = new tools::Clang(*this); break;
+      T = new tools::darwin::Compile(*this); break;
     case Action::AssembleJobClass: {
       if (UseIntegratedAs)
         T = new tools::ClangAs(*this);
@@ -1554,90 +1556,13 @@ Tool &Hexagon_TC::SelectTool(const Compilation &C,
   return *T;
 }
 
-void Hexagon_TC::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
-                                           ArgStringList &CC1Args) const {
-  const Driver &D = getDriver();
-
-  if (DriverArgs.hasArg(options::OPT_nostdinc) ||
-      DriverArgs.hasArg(options::OPT_nostdlibinc))
-    return;
-
-  llvm::sys::Path InstallDir(D.InstalledDir);
-  std::string Ver(GetGCCLibAndIncVersion());
-  std::string GnuDir = Hexagon_TC::GetGnuDir(D.InstalledDir);
-  std::string HexagonDir(GnuDir + "/lib/gcc/hexagon/" + Ver);
-  addExternCSystemInclude(DriverArgs, CC1Args, HexagonDir + "/include");
-  addExternCSystemInclude(DriverArgs, CC1Args, HexagonDir + "/include-fixed");
-  addExternCSystemInclude(DriverArgs, CC1Args, GnuDir + "/hexagon/include");
+bool Hexagon_TC::isPICDefault() const {
+  return false;
 }
 
-void Hexagon_TC::AddClangCXXStdlibIncludeArgs(const ArgList &DriverArgs,
-                                              ArgStringList &CC1Args) const {
-
-  if (DriverArgs.hasArg(options::OPT_nostdlibinc) ||
-      DriverArgs.hasArg(options::OPT_nostdincxx))
-    return;
-
-  const Driver &D = getDriver();
-  std::string Ver(GetGCCLibAndIncVersion());
-  llvm::sys::Path IncludeDir(Hexagon_TC::GetGnuDir(D.InstalledDir));
-
-  IncludeDir.appendComponent("hexagon/include/c++/");
-  IncludeDir.appendComponent(Ver);
-  addSystemInclude(DriverArgs, CC1Args, IncludeDir.str());
+bool Hexagon_TC::isPICDefaultForced() const {
+  return false;
 }
-
-ToolChain::CXXStdlibType
-Hexagon_TC::GetCXXStdlibType(const ArgList &Args) const {
-  Arg *A = Args.getLastArg(options::OPT_stdlib_EQ);
-  if (!A)
-    return ToolChain::CST_Libstdcxx;
-
-  StringRef Value = A->getValue();
-  if (Value != "libstdc++") {
-    getDriver().Diag(diag::err_drv_invalid_stdlib_name)
-      << A->getAsString(Args);
-  }
-
-  return ToolChain::CST_Libstdcxx;
-}
-
-static Arg *GetLastHexagonArchArg(const ArgList &Args)
-{
-  Arg *A = NULL;
-
-  for (ArgList::const_iterator it = Args.begin(), ie = Args.end();
-       it != ie; ++it) {
-    if ((*it)->getOption().matches(options::OPT_march_EQ) ||
-        (*it)->getOption().matches(options::OPT_mcpu_EQ)) {
-      A = *it;
-      A->claim();
-    } else if ((*it)->getOption().matches(options::OPT_m_Joined)) {
-      StringRef Value = (*it)->getValue(0);
-      if (Value.startswith("v")) {
-        A = *it;
-        A->claim();
-      }
-    }
-  }
-  return A;
-}
-
-StringRef Hexagon_TC::GetTargetCPU(const ArgList &Args)
-{
-  // Select the default CPU (v4) if none was given or detection failed.
-  Arg *A = GetLastHexagonArchArg (Args);
-  if (A) {
-    llvm::StringRef WhichHexagon = A->getValue();
-    if (WhichHexagon.startswith("hexagon"))
-      return WhichHexagon.substr(sizeof("hexagon") - 1);
-    if (WhichHexagon != "")
-      return WhichHexagon;
-  }
-
-  return "v4";
-}
-// End Hexagon
 
 /// TCEToolChain - A tool chain using the llvm bitcode tools to perform
 /// all subcommands. See http://tce.cs.tut.fi for our peculiar target.
@@ -2049,6 +1974,8 @@ enum LinuxDistro {
   UbuntuNatty,
   UbuntuOneiric,
   UbuntuPrecise,
+  UbuntuQuantal,
+  UbuntuRaring,
   UnknownDistro
 };
 
@@ -2066,7 +1993,7 @@ static bool IsDebian(enum LinuxDistro Distro) {
 }
 
 static bool IsUbuntu(enum LinuxDistro Distro) {
-  return Distro >= UbuntuHardy && Distro <= UbuntuPrecise;
+  return Distro >= UbuntuHardy && Distro <= UbuntuRaring;
 }
 
 static LinuxDistro DetectLinuxDistro(llvm::Triple::ArchType Arch) {
@@ -2088,6 +2015,8 @@ static LinuxDistro DetectLinuxDistro(llvm::Triple::ArchType Arch) {
           .Case("natty", UbuntuNatty)
           .Case("oneiric", UbuntuOneiric)
           .Case("precise", UbuntuPrecise)
+          .Case("quantal", UbuntuQuantal)
+          .Case("raring", UbuntuRaring)
           .Default(UnknownDistro);
     return Version;
   }

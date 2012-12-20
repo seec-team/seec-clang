@@ -184,6 +184,16 @@ static bool wasDifferentDeclUsedForInlining(CallEventRef<> Call,
   return RuntimeCallee->getCanonicalDecl() != StaticDecl->getCanonicalDecl();
 }
 
+static bool wasDifferentDeclUsedForInlining(CallEventRef<> Call,
+    const StackFrameContext *calleeCtx) {
+  const Decl *RuntimeCallee = calleeCtx->getDecl();
+  const Decl *StaticDecl = Call->getDecl();
+  assert(RuntimeCallee);
+  if (!StaticDecl)
+    return true;
+  return RuntimeCallee->getCanonicalDecl() != StaticDecl->getCanonicalDecl();
+}
+
 /// The call exit is simulated with a sequence of nodes, which occur between 
 /// CallExitBegin and CallExitEnd. The following operations occur between the 
 /// two program points:

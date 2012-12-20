@@ -2199,7 +2199,11 @@ StmtResult Parser::ParseCXXCatchBlock(bool FnCatch) {
   // The name in a catch exception-declaration is local to the handler and
   // shall not be redeclared in the outermost block of the handler.
   ParseScope CatchScope(this, Scope::DeclScope | Scope::ControlScope |
+<<<<<<< HEAD
                           (FnCatch ? Scope::FnTryCatchScope : 0));
+=======
+                          (FnCatch ? Scope::FnCatchScope : Scope::CatchScope));
+>>>>>>> origin/release_32
 
   // exception-declaration is equivalent to '...' or a parameter-declaration
   // without default arguments.
