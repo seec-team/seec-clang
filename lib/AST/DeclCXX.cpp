@@ -1156,12 +1156,11 @@ CXXDestructorDecl *CXXRecordDecl::getDestructor() const {
     = Context.DeclarationNames.getCXXDestructorName(
                                           Context.getCanonicalType(ClassType));
 
-  DeclContext::lookup_const_iterator I, E;
-  llvm::tie(I, E) = lookup(Name);
-  if (I == E)
+  DeclContext::lookup_const_result R = lookup(Name);
+  if (R.empty())
     return 0;
 
-  CXXDestructorDecl *Dtor = cast<CXXDestructorDecl>(*I);
+  CXXDestructorDecl *Dtor = cast<CXXDestructorDecl>(R.front());
   return Dtor;
 }
 
@@ -1275,7 +1274,7 @@ CXXMethodDecl::getCorrespondingMethodInClass(const CXXRecordDecl *RD,
   }
 
   lookup_const_result Candidates = RD->lookup(getDeclName());
-  for (NamedDecl * const * I = Candidates.first; I != Candidates.second; ++I) {
+  for (NamedDecl * const * I = Candidates.begin(); I != Candidates.end(); ++I) {
     CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(*I);
     if (!MD)
       continue;
@@ -1350,9 +1349,10 @@ bool CXXMethodDecl::isUsualDeallocationFunction() const {
                  
   // This function is a usual deallocation function if there are no 
   // single-parameter deallocation functions of the same kind.
-  for (DeclContext::lookup_const_result R = getDeclContext()->lookup(getDeclName());
-       R.first != R.second; ++R.first) {
-    if (const FunctionDecl *FD = dyn_cast<FunctionDecl>(*R.first))
+  DeclContext::lookup_const_result R = getDeclContext()->lookup(getDeclName());
+  for (DeclContext::lookup_const_result::iterator I = R.begin(), E = R.end();
+       I != E; ++I) {
+    if (const FunctionDecl *FD = dyn_cast<FunctionDecl>(*I))
       if (FD->getNumParams() == 1)
         return false;
   }

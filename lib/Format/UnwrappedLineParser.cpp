@@ -43,7 +43,8 @@ bool UnwrappedLineParser::parseLevel() {
       parsePPDirective();
       break;
     case tok::comment:
-      parseComment();
+      nextToken();
+      addUnwrappedLine();
       break;
     case tok::l_brace:
       Error |= parseBlock();
@@ -90,22 +91,16 @@ void UnwrappedLineParser::parsePPDirective() {
   }
 }
 
-void UnwrappedLineParser::parseComment() {
-  while (!eof()) {
-    nextToken();
-    if (FormatTok.NewlinesBefore > 0) {
-      addUnwrappedLine();
-      return;
-    }
-  }
-}
-
-void UnwrappedLineParser::parseStatement() {
+void UnwrappedLineParser::parseComments() {
   // Consume leading line comments, e.g. for branches without compounds.
   while (FormatTok.Tok.is(tok::comment)) {
     nextToken();
     addUnwrappedLine();
   }
+}
+
+void UnwrappedLineParser::parseStatement() {
+  parseComments();
 
   switch (FormatTok.Tok.getKind()) {
   case tok::kw_namespace:
@@ -163,6 +158,12 @@ void UnwrappedLineParser::parseStatement() {
         parseLabel();
         return;
       }
+      break;
+    case tok::equal:
+      nextToken();
+      // Skip initializers as they will be formatted by a later step.
+      if (FormatTok.Tok.is(tok::l_brace))
+        nextToken();
       break;
     default:
       nextToken();
@@ -311,7 +312,9 @@ void UnwrappedLineParser::parseSwitch() {
 
 void UnwrappedLineParser::parseAccessSpecifier() {
   nextToken();
-  nextToken();
+  // Otherwise, we don't know what it is, and we'd better keep the next token.
+  if (FormatTok.Tok.is(tok::colon))
+    nextToken();
   addUnwrappedLine();
 }
 
@@ -323,6 +326,7 @@ void UnwrappedLineParser::parseEnum() {
       nextToken();
       addUnwrappedLine();
       ++Line.Level;
+      parseComments();
       break;
     case tok::l_paren:
       parseParens();
@@ -330,6 +334,7 @@ void UnwrappedLineParser::parseEnum() {
     case tok::comma:
       nextToken();
       addUnwrappedLine();
+      parseComments();
       break;
     case tok::r_brace:
       if (HasContents)

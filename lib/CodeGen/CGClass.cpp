@@ -946,7 +946,7 @@ void CodeGenFunction::EmitDestructorBody(FunctionArgList &Args) {
     // -fapple-kext must inline any call to this dtor into
     // the caller's body.
     if (getLangOpts().AppleKext)
-      CurFn->addFnAttr(llvm::Attributes::AlwaysInline);
+      CurFn->addFnAttr(llvm::Attribute::AlwaysInline);
     break;
   }
 
@@ -1757,7 +1757,7 @@ void CodeGenFunction::EmitForwardingCallToLambda(const CXXRecordDecl *lambda,
   DeclarationName operatorName
     = getContext().DeclarationNames.getCXXOperatorName(OO_Call);
   CXXMethodDecl *callOperator =
-    cast<CXXMethodDecl>(*lambda->lookup(operatorName).first);
+    cast<CXXMethodDecl>(lambda->lookup(operatorName).front());
 
   // Get the address of the call operator.
   const CGFunctionInfo &calleeFnInfo =
@@ -1787,6 +1787,8 @@ void CodeGenFunction::EmitForwardingCallToLambda(const CXXRecordDecl *lambda,
   // If necessary, copy the returned value into the slot.
   if (!resultType->isVoidType() && returnSlot.isNull())
     EmitReturnOfRValue(RV, resultType);
+  else
+    EmitBranchThroughCleanup(ReturnBlock);
 }
 
 void CodeGenFunction::EmitLambdaBlockInvokeBody() {
