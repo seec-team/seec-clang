@@ -1,5 +1,4 @@
 // RUN: %clang_cc1 -analyze -analyzer-checker=core,alpha.deadcode.UnreachableCode,alpha.core.CastSize,unix.Malloc,debug.ExprInspection -analyzer-store=region -verify %s
-// REQUIRES: LP64
 
 #include "Inputs/system-header-simulator.h"
 
