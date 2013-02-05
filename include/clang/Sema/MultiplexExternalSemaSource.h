@@ -39,7 +39,7 @@ namespace clang {
 class MultiplexExternalSemaSource : public ExternalSemaSource {
 
 private:
-  llvm::SmallVector<ExternalSemaSource*, 2> Sources; // doesn't own them.
+  SmallVector<ExternalSemaSource *, 2> Sources; // doesn't own them.
 
 public:
   
@@ -252,6 +252,11 @@ public:
   /// \brief Load the set of namespaces that are known to the external source,
   /// which will be used during typo correction.
   virtual void ReadKnownNamespaces(SmallVectorImpl<NamespaceDecl*> &Namespaces);
+
+  /// \brief Load the set of used but not defined functions or variables with
+  /// internal linkage, or used but not defined inline functions.
+  virtual void ReadUndefinedButUsed(
+                         llvm::DenseMap<NamedDecl*, SourceLocation> &Undefined);
   
   /// \brief Do last resort, unqualified lookup on a LookupResult that
   /// Sema cannot find.
@@ -309,14 +314,14 @@ public:
   /// introduce the same declarations repeatedly.
   virtual void ReadDynamicClasses(SmallVectorImpl<CXXRecordDecl*> &Decls);
 
-  /// \brief Read the set of locally-scoped external declarations known to the
+  /// \brief Read the set of locally-scoped extern "C" declarations known to the
   /// external Sema source.
   ///
   /// The external source should append its own locally-scoped external
-  /// declarations to the given vector of declarations. Note that this routine 
-  /// may be invoked multiple times; the external source should take care not 
+  /// declarations to the given vector of declarations. Note that this routine
+  /// may be invoked multiple times; the external source should take care not
   /// to introduce the same declarations repeatedly.
-  virtual void ReadLocallyScopedExternalDecls(SmallVectorImpl<NamedDecl*>&Decls);
+  virtual void ReadLocallyScopedExternCDecls(SmallVectorImpl<NamedDecl*>&Decls);
 
   /// \brief Read the set of referenced selectors known to the
   /// external Sema source.

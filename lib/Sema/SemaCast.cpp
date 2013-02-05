@@ -1775,7 +1775,7 @@ static TryCastResult TryReinterpretCast(Sema &Self, ExprResult &SrcExpr,
     // FIXME: Conditionally-supported behavior should be configurable in the
     // TargetInfo or similar.
     Self.Diag(OpRange.getBegin(),
-              Self.getLangOpts().CPlusPlus0x ?
+              Self.getLangOpts().CPlusPlus11 ?
                 diag::warn_cxx98_compat_cast_fn_obj : diag::ext_cast_fn_obj)
       << OpRange;
     return TC_Success;
@@ -1784,7 +1784,7 @@ static TryCastResult TryReinterpretCast(Sema &Self, ExprResult &SrcExpr,
   if (DestType->isFunctionPointerType()) {
     // See above.
     Self.Diag(OpRange.getBegin(),
-              Self.getLangOpts().CPlusPlus0x ?
+              Self.getLangOpts().CPlusPlus11 ?
                 diag::warn_cxx98_compat_cast_fn_obj : diag::ext_cast_fn_obj)
       << OpRange;
     return TC_Success;
@@ -2099,6 +2099,21 @@ void CastOperation::CheckCStyleCast() {
       Self.Diag(SrcExpr.get()->getLocStart(),
            diag::err_cast_pointer_to_non_pointer_int)
         << DestType << SrcExpr.get()->getSourceRange();
+      SrcExpr = ExprError();
+      return;
+    }
+  }
+
+  if (Self.getLangOpts().OpenCL && !Self.getOpenCLOptions().cl_khr_fp16) {
+    if (DestType->isHalfType()) {
+      Self.Diag(SrcExpr.get()->getLocStart(), diag::err_opencl_cast_to_half)
+        << DestType << SrcExpr.get()->getSourceRange();
+      SrcExpr = ExprError();
+      return;
+    }
+    if (SrcExpr.get()->getType()->isHalfType()) {
+      Self.Diag(SrcExpr.get()->getLocStart(), diag::err_opencl_cast_from_half)
+        << SrcType << SrcExpr.get()->getSourceRange();
       SrcExpr = ExprError();
       return;
     }

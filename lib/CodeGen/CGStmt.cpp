@@ -19,9 +19,9 @@
 #include "clang/Basic/PrettyStackTrace.h"
 #include "clang/Basic/TargetInfo.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/DataLayout.h"
-#include "llvm/InlineAsm.h"
-#include "llvm/Intrinsics.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/Intrinsics.h"
 using namespace clang;
 using namespace CodeGen;
 
@@ -199,6 +199,12 @@ RValue CodeGenFunction::EmitCompoundStmt(const CompoundStmt &S, bool GetLast,
 
   // Keep track of the current cleanup stack depth, including debug scopes.
   LexicalScope Scope(*this, S.getSourceRange());
+
+  return EmitCompoundStmtWithoutScope(S, GetLast, AggSlot);
+}
+
+RValue CodeGenFunction::EmitCompoundStmtWithoutScope(const CompoundStmt &S, bool GetLast,
+                                         AggValueSlot AggSlot) {
 
   for (CompoundStmt::const_body_iterator I = S.body_begin(),
        E = S.body_end()-GetLast; I != E; ++I)

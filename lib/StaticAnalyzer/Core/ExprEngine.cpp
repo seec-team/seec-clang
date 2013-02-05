@@ -404,7 +404,7 @@ void ExprEngine::ProcessInitializer(const CFGInitializer Init,
   if (BMI->isAnyMemberInitializer()) {
     // Constructors build the object directly in the field,
     // but non-objects must be copied in from the initializer.
-    const Expr *Init = BMI->getInit();
+    const Expr *Init = BMI->getInit()->IgnoreImplicit();
     if (!isa<CXXConstructExpr>(Init)) {
       SVal FieldLoc;
       if (BMI->isIndirectMemberInitializer())
@@ -1043,7 +1043,8 @@ bool ExprEngine::replayWithoutInlining(ExplodedNode *N,
   // Add the special flag to GDM to signal retrying with no inlining.
   // Note, changing the state ensures that we are not going to cache out.
   ProgramStateRef NewNodeState = BeforeProcessingCall->getState();
-  NewNodeState = NewNodeState->set<ReplayWithoutInlining>((void*)CE);
+  NewNodeState =
+    NewNodeState->set<ReplayWithoutInlining>(const_cast<Stmt *>(CE));
 
   // Make the new node a successor of BeforeProcessingCall.
   bool IsNew = false;
@@ -1337,10 +1338,10 @@ void ExprEngine::processEndOfFunction(NodeBuilderContext& BC,
     // Notify checkers.
     for (ExplodedNodeSet::iterator I = AfterRemovedDead.begin(),
         E = AfterRemovedDead.end(); I != E; ++I) {
-      getCheckerManager().runCheckersForEndPath(BC, Dst, *I, *this);
+      getCheckerManager().runCheckersForEndFunction(BC, Dst, *I, *this);
     }
   } else {
-    getCheckerManager().runCheckersForEndPath(BC, Dst, Pred, *this);
+    getCheckerManager().runCheckersForEndFunction(BC, Dst, Pred, *this);
   }
 
   Engine.enqueueEndOfFunction(Dst);
@@ -1602,14 +1603,13 @@ public:
 };
 } // end anonymous namespace
 
-/// Call PointerEscape callback when a value escapes as a result of bind.
-/// A value escapes in three possible cases:
-/// (1) we are binding to something that is not a memory region.
-/// (2) we are binding to a memregion that does not have stack storage
-/// (3) we are binding to a memregion with stack storage that the store
-///     does not understand.
+// A value escapes in three possible cases:
+// (1) We are binding to something that is not a memory region.
+// (2) We are binding to a MemrRegion that does not have stack storage.
+// (3) We are binding to a MemRegion with stack storage that the store
+//     does not understand.
 ProgramStateRef ExprEngine::processPointerEscapedOnBind(ProgramStateRef State,
-                                                       SVal Loc, SVal Val) {
+                                                        SVal Loc, SVal Val) {
   // Are we storing to something that causes the value to "escape"?
   bool escapes = true;
 
@@ -1647,8 +1647,6 @@ ProgramStateRef ExprEngine::processPointerEscapedOnBind(ProgramStateRef State,
   return State;
 }
 
-/// Call PointerEscape callback when a value escapes as a result of
-/// region invalidation.
 ProgramStateRef 
 ExprEngine::processPointerEscapedOnInvalidateRegions(ProgramStateRef State,
     const InvalidatedSymbols *Invalidated,
@@ -2009,7 +2007,7 @@ struct DOTGraphTraits<ExplodedNode*> :
     return "";
   }
 
-  static void printLocation(llvm::raw_ostream &Out, SourceLocation SLoc) {
+  static void printLocation(raw_ostream &Out, SourceLocation SLoc) {
     if (SLoc.isFileID()) {
       Out << "\\lline="
         << GraphPrintSourceManager->getExpansionLineNumber(SLoc)

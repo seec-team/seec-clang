@@ -694,6 +694,10 @@ namespace clang {
       /// \brief Return the second template argument this deduction failure
       /// refers to, if any.
       const TemplateArgument *getSecondArg();
+
+      /// \brief Return the expression this deduction failure refers to,
+      /// if any.
+      Expr *getExpr();
       
       /// \brief Free any memory associated with this deduction failure.
       void Destroy();
@@ -809,7 +813,7 @@ namespace clang {
 
     void NoteCandidates(Sema &S,
                         OverloadCandidateDisplayKind OCD,
-                        llvm::ArrayRef<Expr *> Args,
+                        ArrayRef<Expr *> Args,
                         StringRef Opc = "",
                         SourceLocation Loc = SourceLocation());
   };

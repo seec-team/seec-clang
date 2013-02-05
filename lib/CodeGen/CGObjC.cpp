@@ -21,8 +21,8 @@
 #include "clang/AST/StmtObjC.h"
 #include "clang/Basic/Diagnostic.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/DataLayout.h"
-#include "llvm/InlineAsm.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/InlineAsm.h"
 using namespace clang;
 using namespace CodeGen;
 
@@ -1705,15 +1705,17 @@ static llvm::Constant *createARCRuntimeFunction(CodeGenModule &CGM,
                                                 StringRef fnName) {
   llvm::Constant *fn = CGM.CreateRuntimeFunction(type, fnName);
 
-  // If the target runtime doesn't naturally support ARC, emit weak
-  // references to the runtime support library.  We don't really
-  // permit this to fail, but we need a particular relocation style.
   if (llvm::Function *f = dyn_cast<llvm::Function>(fn)) {
-    if (!CGM.getLangOpts().ObjCRuntime.hasNativeARC())
+    // If the target runtime doesn't naturally support ARC, emit weak
+    // references to the runtime support library.  We don't really
+    // permit this to fail, but we need a particular relocation style.
+    if (!CGM.getLangOpts().ObjCRuntime.hasNativeARC()) {
       f->setLinkage(llvm::Function::ExternalWeakLinkage);
-    // set nonlazybind attribute for these APIs for performance.
-    if (fnName == "objc_retain" || fnName  == "objc_release")
+    } else if (fnName == "objc_retain" || fnName  == "objc_release") {
+      // If we have Native ARC, set nonlazybind attribute for these APIs for
+      // performance.
       f->addFnAttr(llvm::Attribute::NonLazyBind);
+    }
   }
 
   return fn;
@@ -2445,7 +2447,7 @@ static bool shouldEmitSeparateBlockRetain(const Expr *e) {
 /// This massively duplicates emitPseudoObjectRValue.
 static TryEmitResult tryEmitARCRetainPseudoObject(CodeGenFunction &CGF,
                                                   const PseudoObjectExpr *E) {
-  llvm::SmallVector<CodeGenFunction::OpaqueValueMappingData, 4> opaques;
+  SmallVector<CodeGenFunction::OpaqueValueMappingData, 4> opaques;
 
   // Find the result expression.
   const Expr *resultExpr = E->getResultExpr();

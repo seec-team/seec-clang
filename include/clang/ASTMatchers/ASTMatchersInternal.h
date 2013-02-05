@@ -193,7 +193,7 @@ class ASTMatchFinder;
 /// current node and doesn't care about its children or descendants,
 /// implement SingleNodeMatcherInterface instead.
 template <typename T>
-class MatcherInterface : public llvm::RefCountedBaseVPTR {
+class MatcherInterface : public RefCountedBaseVPTR {
 public:
   virtual ~MatcherInterface() {}
 
@@ -343,7 +343,7 @@ private:
     const Matcher<Base> From;
   };
 
-  llvm::IntrusiveRefCntPtr< MatcherInterface<T> > Implementation;
+  IntrusiveRefCntPtr< MatcherInterface<T> > Implementation;
 };  // class Matcher
 
 /// \brief A convenient helper for creating a Matcher<T> without specifying
@@ -676,7 +676,7 @@ public:
   virtual bool matches(const T &Node,
                        ASTMatchFinder *Finder,
                        BoundNodesTreeBuilder *Builder) const {
-    const To *InnerMatchValue = llvm::dyn_cast<To>(&Node);
+    const To *InnerMatchValue = dyn_cast<To>(&Node);
     return InnerMatchValue != NULL &&
       InnerMatcher.matches(*InnerMatchValue, Finder, Builder);
   }
@@ -832,21 +832,56 @@ private:
 /// used. They will always be instantiated with types convertible to
 /// Matcher<T>.
 template <typename T, typename MatcherT1, typename MatcherT2>
+class EachOfMatcher : public MatcherInterface<T> {
+public:
+  EachOfMatcher(const Matcher<T> &InnerMatcher1,
+                const Matcher<T> &InnerMatcher2)
+      : InnerMatcher1(InnerMatcher1), InnerMatcher2(InnerMatcher2) {
+  }
+
+  virtual bool matches(const T &Node, ASTMatchFinder *Finder,
+                       BoundNodesTreeBuilder *Builder) const {
+    BoundNodesTreeBuilder Builder1;
+    bool Matched1 = InnerMatcher1.matches(Node, Finder, &Builder1);
+    if (Matched1)
+      Builder->addMatch(Builder1.build());
+
+    BoundNodesTreeBuilder Builder2;
+    bool Matched2 = InnerMatcher2.matches(Node, Finder, &Builder2);
+    if (Matched2)
+      Builder->addMatch(Builder2.build());
+
+    return Matched1 || Matched2;
+  }
+
+private:
+  const Matcher<T> InnerMatcher1;
+  const Matcher<T> InnerMatcher2;
+};
+
+/// \brief Matches nodes of type T for which at least one of the two provided
+/// matchers matches.
+///
+/// Type arguments MatcherT1 and MatcherT2 are
+/// required by PolymorphicMatcherWithParam2 but not actually
+/// used. They will always be instantiated with types convertible to
+/// Matcher<T>.
+template <typename T, typename MatcherT1, typename MatcherT2>
 class AnyOfMatcher : public MatcherInterface<T> {
 public:
   AnyOfMatcher(const Matcher<T> &InnerMatcher1, const Matcher<T> &InnerMatcher2)
-      : InnerMatcher1(InnerMatcher1), InnertMatcher2(InnerMatcher2) {}
+      : InnerMatcher1(InnerMatcher1), InnerMatcher2(InnerMatcher2) {}
 
   virtual bool matches(const T &Node,
                        ASTMatchFinder *Finder,
                        BoundNodesTreeBuilder *Builder) const {
     return InnerMatcher1.matches(Node, Finder, Builder) ||
-           InnertMatcher2.matches(Node, Finder, Builder);
+           InnerMatcher2.matches(Node, Finder, Builder);
   }
 
 private:
   const Matcher<T> InnerMatcher1;
-  const Matcher<T> InnertMatcher2;
+  const Matcher<T> InnerMatcher2;
 };
 
 /// \brief Creates a Matcher<T> that matches if all inner matchers match.

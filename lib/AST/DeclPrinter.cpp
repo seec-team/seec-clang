@@ -7,7 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements the Decl::dump method, which pretty print the
+// This file implements the Decl::print method, which pretty prints the
 // AST back out to C/Objective-C/C++/Objective-C++ code.
 //
 //===----------------------------------------------------------------------===//
@@ -83,7 +83,7 @@ namespace {
     void VisitUsingShadowDecl(UsingShadowDecl *D);
 
     void PrintTemplateParameters(const TemplateParameterList *Params,
-                                 const TemplateArgumentList *Args);
+                                 const TemplateArgumentList *Args = 0);
     void prettyPrintAttributes(Decl *D);
   };
 }
@@ -176,16 +176,6 @@ void DeclContext::dumpDeclContext() const {
   Printer.VisitDeclContext(const_cast<DeclContext *>(this), /*Indent=*/false);
 }
 
-void Decl::dump() const {
-  dump(llvm::errs());
-}
-
-void Decl::dump(raw_ostream &Out) const {
-  PrintingPolicy Policy = getASTContext().getPrintingPolicy();
-  Policy.DumpSourceManager = &getASTContext().getSourceManager();
-  print(Out, Policy, /*Indentation*/ 0, /*PrintInstantiation*/ true);
-}
-
 raw_ostream& DeclPrinter::Indent(unsigned Indentation) {
   for (unsigned i = 0; i != Indentation; ++i)
     Out << "  ";
@@ -242,18 +232,18 @@ void DeclPrinter::VisitDeclContext(DeclContext *DC, bool Indent) {
     if (isa<ObjCIvarDecl>(*D))
       continue;
 
-    if (!Policy.DumpSourceManager) {
-      // Skip over implicit declarations in pretty-printing mode.
-      if (D->isImplicit()) continue;
-      // FIXME: Ugly hack so we don't pretty-print the builtin declaration
-      // of __builtin_va_list or __[u]int128_t.  There should be some other way
-      // to check that.
-      if (NamedDecl *ND = dyn_cast<NamedDecl>(*D)) {
-        if (IdentifierInfo *II = ND->getIdentifier()) {
-          if (II->isStr("__builtin_va_list") ||
-              II->isStr("__int128_t") || II->isStr("__uint128_t"))
-            continue;
-        }
+    // Skip over implicit declarations in pretty-printing mode.
+    if (D->isImplicit())
+      continue;
+
+    // FIXME: Ugly hack so we don't pretty-print the builtin declaration
+    // of __builtin_va_list or __[u]int128_t.  There should be some other way
+    // to check that.
+    if (NamedDecl *ND = dyn_cast<NamedDecl>(*D)) {
+      if (IdentifierInfo *II = ND->getIdentifier()) {
+        if (II->isStr("__builtin_va_list") ||
+            II->isStr("__int128_t") || II->isStr("__uint128_t"))
+          continue;
       }
     }
 
@@ -590,10 +580,11 @@ void DeclPrinter::VisitFunctionDecl(FunctionDecl *D) {
 
 void DeclPrinter::VisitFriendDecl(FriendDecl *D) {
   if (TypeSourceInfo *TSI = D->getFriendType()) {
-    if (CXXRecordDecl *FriendD = TSI->getType()->getAsCXXRecordDecl()) {
-      Out << "friend ";
-      VisitCXXRecordDecl(FriendD);
-    }
+    unsigned NumTPLists = D->getFriendTypeNumTemplateParameterLists();
+    for (unsigned i = 0; i < NumTPLists; ++i)
+      PrintTemplateParameters(D->getFriendTypeTemplateParameterList(i));
+    Out << "friend ";
+    Out << " " << TSI->getType().getAsString(Policy);
   }
   else if (FunctionDecl *FD =
       dyn_cast<FunctionDecl>(D->getFriendDecl())) {
@@ -608,7 +599,7 @@ void DeclPrinter::VisitFriendDecl(FriendDecl *D) {
   else if (ClassTemplateDecl *CTD =
            dyn_cast<ClassTemplateDecl>(D->getFriendDecl())) {
     Out << "friend ";
-    VisitClassTemplateDecl(CTD);
+    VisitRedeclarableTemplateDecl(CTD);
   }
 }
 
@@ -658,9 +649,14 @@ void DeclPrinter::VisitVarDecl(VarDecl *D) {
   Expr *Init = D->getInit();
   if (!Policy.SuppressInitializers && Init) {
     bool ImplicitInit = false;
-    if (CXXConstructExpr *Construct = dyn_cast<CXXConstructExpr>(Init))
-      ImplicitInit = D->getInitStyle() == VarDecl::CallInit &&
-          Construct->getNumArgs() == 0 && !Construct->isListInitialization();
+    if (CXXConstructExpr *Construct =
+            dyn_cast<CXXConstructExpr>(Init->IgnoreImplicit())) {
+      if (D->getInitStyle() == VarDecl::CallInit &&
+          !Construct->isListInitialization()) {
+        ImplicitInit = Construct->getNumArgs() == 0 ||
+          Construct->getArg(0)->isDefaultArgument();
+      }
+    }
     if (!ImplicitInit) {
       if ((D->getInitStyle() == VarDecl::CallInit) && !isa<ParenListExpr>(Init))
         Out << "(";
@@ -779,8 +775,8 @@ void DeclPrinter::VisitLinkageSpecDecl(LinkageSpecDecl *D) {
     Visit(*D->decls_begin());
 }
 
-void DeclPrinter::PrintTemplateParameters(
-    const TemplateParameterList *Params, const TemplateArgumentList *Args = 0) {
+void DeclPrinter::PrintTemplateParameters(const TemplateParameterList *Params,
+                                          const TemplateArgumentList *Args) {
   assert(Params);
   assert(!Args || Params->size() == Args->size());
 

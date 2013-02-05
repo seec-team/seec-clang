@@ -79,16 +79,16 @@ void Sema::InstantiateAttrs(const MultiLevelTemplateArgumentList &TemplateArgs,
           ExprResult Result = SubstExpr(Aligned->getAlignmentExpr(),
                                         TemplateArgs);
           if (!Result.isInvalid())
-            AddAlignedAttr(Aligned->getLocation(), New, Result.takeAs<Expr>(), 
-                           Aligned->getIsMSDeclSpec());
+            AddAlignedAttr(Aligned->getLocation(), New, Result.takeAs<Expr>(),
+                           Aligned->getSpellingListIndex());
         } else {
           TypeSourceInfo *Result = SubstType(Aligned->getAlignmentType(),
                                              TemplateArgs,
                                              Aligned->getLocation(),
                                              DeclarationName());
           if (Result)
-            AddAlignedAttr(Aligned->getLocation(), New, Result, 
-                           Aligned->getIsMSDeclSpec());
+            AddAlignedAttr(Aligned->getLocation(), New, Result,
+                           Aligned->getSpellingListIndex());
         }
         continue;
       }
@@ -347,6 +347,9 @@ Decl *TemplateDeclInstantiator::VisitVarDecl(VarDecl *D) {
   }
   SemaRef.InstantiateAttrs(TemplateArgs, D, Var, LateAttrs, StartingScope);
 
+  if (Var->hasAttrs())
+    SemaRef.CheckAlignasUnderalignment(Var);
+
   // Link instantiations of static data members back to the template from
   // which they were instantiated.
   if (Var->isStaticDataMember())
@@ -458,6 +461,9 @@ Decl *TemplateDeclInstantiator::VisitFieldDecl(FieldDecl *D) {
   }
 
   SemaRef.InstantiateAttrs(TemplateArgs, D, Field, LateAttrs, StartingScope);
+
+  if (Field->hasAttrs())
+    SemaRef.CheckAlignasUnderalignment(Field);
 
   if (Invalid)
     Field->setInvalidDecl();
@@ -1120,6 +1126,9 @@ Decl *TemplateDeclInstantiator::VisitFunctionDecl(FunctionDecl *D,
                            D->isInlineSpecified(), D->hasWrittenPrototype(),
                            D->isConstexpr());
 
+  if (D->isInlined())
+    Function->setImplicitlyInline();
+
   if (QualifierLoc)
     Function->setQualifierInfo(QualifierLoc);
 
@@ -1287,7 +1296,7 @@ Decl *TemplateDeclInstantiator::VisitFunctionDecl(FunctionDecl *D,
     //
     // If -Wc++98-compat is enabled, we go through the motions of checking for a
     // redefinition, but don't instantiate the function.
-    if ((!SemaRef.getLangOpts().CPlusPlus0x ||
+    if ((!SemaRef.getLangOpts().CPlusPlus11 ||
          SemaRef.Diags.getDiagnosticLevel(
              diag::warn_cxx98_compat_friend_redefinition,
              Function->getLocation())
@@ -1298,11 +1307,11 @@ Decl *TemplateDeclInstantiator::VisitFunctionDecl(FunctionDecl *D,
       if (Function->isDefined(Definition) &&
           Definition->getTemplateSpecializationKind() == TSK_Undeclared) {
         SemaRef.Diag(Function->getLocation(),
-                     SemaRef.getLangOpts().CPlusPlus0x ?
+                     SemaRef.getLangOpts().CPlusPlus11 ?
                        diag::warn_cxx98_compat_friend_redefinition :
                        diag::err_redefinition) << Function->getDeclName();
         SemaRef.Diag(Definition->getLocation(), diag::note_previous_definition);
-        if (!SemaRef.getLangOpts().CPlusPlus0x)
+        if (!SemaRef.getLangOpts().CPlusPlus11)
           Function->setInvalidDecl();
       }
       // Check for redefinitions due to other instantiations of this or
@@ -1314,7 +1323,7 @@ Decl *TemplateDeclInstantiator::VisitFunctionDecl(FunctionDecl *D,
           continue;
         switch (R->getFriendObjectKind()) {
         case Decl::FOK_None:
-          if (!SemaRef.getLangOpts().CPlusPlus0x &&
+          if (!SemaRef.getLangOpts().CPlusPlus11 &&
               !queuedInstantiation && R->isUsed(false)) {
             if (MemberSpecializationInfo *MSInfo
                 = Function->getMemberSpecializationInfo()) {
@@ -1333,12 +1342,12 @@ Decl *TemplateDeclInstantiator::VisitFunctionDecl(FunctionDecl *D,
               = R->getTemplateInstantiationPattern())
             if (RPattern->isDefined(RPattern)) {
               SemaRef.Diag(Function->getLocation(),
-                           SemaRef.getLangOpts().CPlusPlus0x ?
+                           SemaRef.getLangOpts().CPlusPlus11 ?
                              diag::warn_cxx98_compat_friend_redefinition :
                              diag::err_redefinition)
                 << Function->getDeclName();
               SemaRef.Diag(R->getLocation(), diag::note_previous_definition);
-              if (!SemaRef.getLangOpts().CPlusPlus0x)
+              if (!SemaRef.getLangOpts().CPlusPlus11)
                 Function->setInvalidDecl();
               break;
             }
@@ -1484,6 +1493,9 @@ TemplateDeclInstantiator::VisitCXXMethodDecl(CXXMethodDecl *D,
                                    D->isInlineSpecified(),
                                    D->isConstexpr(), D->getLocEnd());
   }
+
+  if (D->isInlined())
+    Method->setImplicitlyInline();
 
   if (QualifierLoc)
     Method->setQualifierInfo(QualifierLoc);
@@ -2427,7 +2439,7 @@ static void InstantiateExceptionSpec(Sema &SemaRef, FunctionDecl *New,
     ThisTypeQuals = Method->getTypeQualifiers();
   }
   Sema::CXXThisScopeRAII ThisScope(SemaRef, ThisContext, ThisTypeQuals,
-                                   SemaRef.getLangOpts().CPlusPlus0x);
+                                   SemaRef.getLangOpts().CPlusPlus11);
 
   // The function has an exception specification or a "noreturn"
   // attribute. Substitute into each of the exception types.
@@ -2615,7 +2627,7 @@ TemplateDeclInstantiator::InitFunctionInstantiation(FunctionDecl *New,
 
     // DR1330: In C++11, defer instantiation of a non-trivial
     // exception specification.
-    if (SemaRef.getLangOpts().CPlusPlus0x &&
+    if (SemaRef.getLangOpts().CPlusPlus11 &&
         EPI.ExceptionSpecType != EST_None &&
         EPI.ExceptionSpecType != EST_DynamicNone &&
         EPI.ExceptionSpecType != EST_BasicNoexcept) {
@@ -2762,6 +2774,9 @@ void Sema::InstantiateFunctionDefinition(SourceLocation PointOfInstantiation,
         == TSK_ExplicitInstantiationDeclaration &&
       !PatternDecl->isInlined())
     return;
+
+  if (PatternDecl->isInlined())
+    Function->setImplicitlyInline();
 
   InstantiatingTemplate Inst(*this, PointOfInstantiation, Function);
   if (Inst)
@@ -3134,7 +3149,7 @@ Sema::InstantiateMemInitializers(CXXConstructorDecl *New,
   ActOnMemInitializers(New,
                        /*FIXME: ColonLoc */
                        SourceLocation(),
-                       NewInits.data(), NewInits.size(),
+                       NewInits,
                        AnyErrors);
 }
 

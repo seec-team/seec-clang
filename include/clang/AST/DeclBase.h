@@ -32,6 +32,7 @@ class DependentDiagnostic;
 class EnumDecl;
 class FunctionDecl;
 class LinkageSpecDecl;
+class Module;
 class NamedDecl;
 class NamespaceDecl;
 class ObjCCategoryDecl;
@@ -592,7 +593,18 @@ public:
     
     return 0;
   }
-  
+
+private:
+  Module *getOwningModuleSlow() const;
+
+public:
+  Module *getOwningModule() const {
+    if (!isFromASTFile())
+      return 0;
+
+    return getOwningModuleSlow();
+  }
+
   unsigned getIdentifierNamespace() const {
     return IdentifierNamespace;
   }
@@ -850,6 +862,8 @@ public:
                          unsigned Indentation = 0);
   // Debuggers don't usually respect default arguments.
   LLVM_ATTRIBUTE_USED void dump() const;
+  // Same as dump(), but forces color printing.
+  LLVM_ATTRIBUTE_USED void dumpColor() const;
   void dump(raw_ostream &Out) const;
   // Debuggers don't usually respect default arguments.
   LLVM_ATTRIBUTE_USED void dumpXML() const;
@@ -892,7 +906,7 @@ public:
 
 typedef llvm::MutableArrayRef<NamedDecl*> DeclContextLookupResult;
 
-typedef llvm::ArrayRef<NamedDecl*> DeclContextLookupConstResult;
+typedef ArrayRef<NamedDecl *> DeclContextLookupConstResult;
 
 /// DeclContext - This is used only as base class of specific decl types that
 /// can act as declaration contexts. These decls are (only the top classes
@@ -1139,7 +1153,7 @@ public:
   /// contexts that are semanticaly connected to this declaration context,
   /// in source order, including this context (which may be the only result,
   /// for non-namespace contexts).
-  void collectAllContexts(llvm::SmallVectorImpl<DeclContext *> &Contexts);
+  void collectAllContexts(SmallVectorImpl<DeclContext *> &Contexts);
 
   /// decl_iterator - Iterates through the declarations stored
   /// within this context.
@@ -1402,7 +1416,7 @@ public:
   /// usual relationship between a DeclContext and the external source.
   /// See the ASTImporter for the (few, but important) use cases.
   void localUncachedLookup(DeclarationName Name,
-                           llvm::SmallVectorImpl<NamedDecl *> &Results);
+                           SmallVectorImpl<NamedDecl *> &Results);
 
   /// @brief Makes a declaration visible within this context.
   ///

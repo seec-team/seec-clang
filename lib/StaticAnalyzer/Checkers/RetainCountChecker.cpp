@@ -50,7 +50,6 @@ using llvm::StrInStrNoCase;
 enum ArgEffect { DoNothing, Autorelease, Dealloc, DecRef, DecRefMsg,
                  DecRefBridgedTransfered,
                  IncRefMsg, IncRef, MakeCollectable, MayEscape,
-                 NewAutoreleasePool,
 
                  // Stop tracking the argument - the effect of the call is
                  // unknown.
@@ -895,7 +894,6 @@ static ArgEffect getStopTrackingHardEquivalent(ArgEffect E) {
   case IncRefMsg:
   case MakeCollectable:
   case MayEscape:
-  case NewAutoreleasePool:
   case StopTracking:
   case StopTrackingHard:
     return StopTrackingHard;
@@ -1306,13 +1304,14 @@ RetainSummaryManager::updateSummaryFromAnnotations(const RetainSummary *&Summ,
     else if (FD->getAttr<CFReturnsRetainedAttr>()) {
       Template->setRetEffect(RetEffect::MakeOwned(RetEffect::CF, true));
     }
-    else if (FD->getAttr<NSReturnsNotRetainedAttr>()) {
+    else if (FD->getAttr<NSReturnsNotRetainedAttr>() ||
+             FD->getAttr<NSReturnsAutoreleasedAttr>()) {
       Template->setRetEffect(RetEffect::MakeNotOwned(RetEffect::ObjC));
     }
-    else if (FD->getAttr<CFReturnsNotRetainedAttr>()) {
+    else if (FD->getAttr<CFReturnsNotRetainedAttr>())
       Template->setRetEffect(RetEffect::MakeNotOwned(RetEffect::CF));
     }
-  } else if (RetTy->getAs<PointerType>()) {
+    else if (RetTy->getAs<PointerType>()) {
     if (FD->getAttr<CFReturnsRetainedAttr>()) {
       Template->setRetEffect(RetEffect::MakeOwned(RetEffect::CF, true));
     }
@@ -1359,7 +1358,8 @@ RetainSummaryManager::updateSummaryFromAnnotations(const RetainSummary *&Summ,
       Template->setRetEffect(ObjCAllocRetE);
       return;
     }
-    if (MD->getAttr<NSReturnsNotRetainedAttr>()) {
+    if (MD->getAttr<NSReturnsNotRetainedAttr>() ||
+        MD->getAttr<NSReturnsAutoreleasedAttr>()) {
       Template->setRetEffect(RetEffect::MakeNotOwned(RetEffect::ObjC));
       return;
     }
@@ -1568,10 +1568,6 @@ void RetainSummaryManager::InitializeMethodSummaries() {
   Summ = getPersistentSummary(NoRet, DecRefMsg);
   addNSObjectMethSummary(GetNullarySelector("release", Ctx), Summ);
 
-  // Create the "drain" selector.
-  Summ = getPersistentSummary(NoRet, isGCEnabled() ? DoNothing : DecRef);
-  addNSObjectMethSummary(GetNullarySelector("drain", Ctx), Summ);
-
   // Create the -dealloc summary.
   Summ = getPersistentSummary(NoRet, Dealloc);
   addNSObjectMethSummary(GetNullarySelector("dealloc", Ctx), Summ);
@@ -1579,10 +1575,6 @@ void RetainSummaryManager::InitializeMethodSummaries() {
   // Create the "autorelease" selector.
   Summ = getPersistentSummary(NoRet, Autorelease);
   addNSObjectMethSummary(GetNullarySelector("autorelease", Ctx), Summ);
-
-  // Specially handle NSAutoreleasePool.
-  addInstMethSummary("NSAutoreleasePool", "init",
-                     getPersistentSummary(NoRet, NewAutoreleasePool));
 
   // For NSWindow, allocated objects are (initially) self-owned.
   // FIXME: For now we opt for false negatives with NSWindow, as these objects
@@ -1602,10 +1594,11 @@ void RetainSummaryManager::InitializeMethodSummaries() {
   //   as for NSWindow objects.
   addClassMethSummary("NSPanel", "alloc", NoTrackYet);
 
-  // Don't track allocated autorelease pools yet, as it is okay to prematurely
+  // Don't track allocated autorelease pools, as it is okay to prematurely
   // exit a method.
   addClassMethSummary("NSAutoreleasePool", "alloc", NoTrackYet);
   addClassMethSummary("NSAutoreleasePool", "allocWithZone", NoTrackYet, false);
+  addClassMethSummary("NSAutoreleasePool", "new", NoTrackYet);
 
   // Create summaries QCRenderer/QCView -createSnapShotImageOfType:
   addInstMethSummary("QCRenderer", AllocSumm,
@@ -2350,7 +2343,7 @@ class RetainCountChecker
   : public Checker< check::Bind,
                     check::DeadSymbols,
                     check::EndAnalysis,
-                    check::EndPath,
+                    check::EndFunction,
                     check::PostStmt<BlockExpr>,
                     check::PostStmt<CastExpr>,
                     check::PostStmt<ObjCArrayLiteral>,
@@ -2527,7 +2520,7 @@ public:
                                 SymbolRef Sym, ProgramStateRef state) const;
                                               
   void checkDeadSymbols(SymbolReaper &SymReaper, CheckerContext &C) const;
-  void checkEndPath(CheckerContext &C) const;
+  void checkEndFunction(CheckerContext &C) const;
 
   ProgramStateRef updateSymbol(ProgramStateRef state, SymbolRef sym,
                                RefVal V, ArgEffect E, RefVal::Kind &hasErr,
@@ -2941,9 +2934,6 @@ RetainCountChecker::updateSymbol(ProgramStateRef state, SymbolRef sym,
   case MakeCollectable:
     E = C.isObjCGCEnabled() ? DecRef : DoNothing;
     break;
-  case NewAutoreleasePool:
-    E = C.isObjCGCEnabled() ? DoNothing : NewAutoreleasePool;
-    break;
   }
 
   // Handle all use-after-releases.
@@ -2982,10 +2972,6 @@ RetainCountChecker::updateSymbol(ProgramStateRef state, SymbolRef sym,
           break;
       }
       break;
-
-    case NewAutoreleasePool:
-      assert(!C.isObjCGCEnabled());
-      return state;
 
     case MayEscape:
       if (V.getKind() == RefVal::Owned) {
@@ -3177,7 +3163,7 @@ bool RetainCountChecker::evalCall(const CallExpr *CE, CheckerContext &C) const {
 
     // Invalidate the argument region.
     state = state->invalidateRegions(ArgRegion, CE, C.blockCount(), LCtx,
-                                     /*ResultsInPointerEscape*/ false);
+                                     /*CausesPointerEscape*/ false);
 
     // Restore the refcount status of the argument.
     if (Binding)
@@ -3501,7 +3487,7 @@ RetainCountChecker::handleAutoreleaseCounts(ProgramStateRef state,
       else
         V = V ^ RefVal::NotOwned;
     } else {
-      V.setCount(Cnt - ACnt);
+      V.setCount(V.getCount() - ACnt);
       V.setAutoreleaseCount(0);
     }
     return setRefBinding(state, Sym, V);
@@ -3578,7 +3564,7 @@ RetainCountChecker::processLeaks(ProgramStateRef state,
   return N;
 }
 
-void RetainCountChecker::checkEndPath(CheckerContext &Ctx) const {
+void RetainCountChecker::checkEndFunction(CheckerContext &Ctx) const {
   ProgramStateRef state = Ctx.getState();
   RefBindingsTy B = state->get<RefBindings>();
   ExplodedNode *Pred = Ctx.getPredecessor();

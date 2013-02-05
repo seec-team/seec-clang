@@ -334,13 +334,12 @@ output format of the diagnostics that it generates.
 
 .. _opt_fdiagnostics-print-source-range-info:
 
-**-f[no-]diagnostics-print-source-range-info**
+**-fdiagnostics-print-source-range-info**
    Print machine parsable information about source ranges.
-   This option, which defaults to off, controls whether or not Clang
-   prints information about source ranges in a machine parsable format
-   after the file/line/column number information. The information is a
-   simple sequence of brace enclosed ranges, where each range lists the
-   start and end line/column locations. For example, in this output:
+   This option makes Clang print information about source ranges in a machine
+   parsable format after the file/line/column number information. The
+   information is a simple sequence of brace enclosed ranges, where each range
+   lists the start and end line/column locations. For example, in this output:
 
    ::
 
@@ -854,9 +853,12 @@ are listed below.
       suspicious integer behavior.
    -  .. _opt_fsanitize_thread:
 
-      ``-fsanitize=thread``: :doc:`ThreadSanitizer`,
-      an *experimental* data race detector. Not ready for widespread
-      use.
+      ``-fsanitize=thread``: :doc:`ThreadSanitizer`, a data race detector.
+   -  .. _opt_fsanitize_memory:
+
+      ``-fsanitize=memory``: :doc:`MemorySanitizer`,
+      an *experimental* detector of uninitialized reads. Not ready for
+      widespread use.
    -  .. _opt_fsanitize_undefined:
 
       ``-fsanitize=undefined``: Fast and compatible undefined behavior
@@ -864,6 +866,14 @@ are listed below.
       runtime cost and no impact on address space layout or ABI. This
       includes all of the checks listed below other than
       ``unsigned-integer-overflow``.
+
+      ``-fsanitize=undefined-trap``: This includes all sanitizers
+      included by ``-fsanitize=undefined``, except those that require
+      runtime support.  This group of sanitizers are generally used
+      in conjunction with the ``-fsanitize-undefined-trap-on-error``
+      flag, which causes traps to be emitted, rather than calls to
+      runtime libraries. This includes all of the checks listed below
+      other than ``unsigned-integer-overflow`` and ``vptr``.
 
    The following more fine-grained checks are also available:
 
@@ -918,6 +928,15 @@ are listed below.
       errors (accessing local variable after the function exit).
    -  ``-fsanitize=use-after-scope``: Check for use-after-scope errors
       (accesing local variable after it went out of scope).
+
+   Extra features of MemorySanitizer (require explicit
+   ``-fsanitize=memory``):
+
+   -  ``-fsanitize-memory-track-origins``: Enables origin tracking in
+      MemorySanitizer. Adds a second section to MemorySanitizer
+      reports pointing to the heap or stack allocation the
+      uninitialized bits came from. Slows down execution by additional
+      1.5x-2x.
 
    The ``-fsanitize=`` argument must also be provided when linking, in
    order to link to the appropriate runtime library. It is not possible

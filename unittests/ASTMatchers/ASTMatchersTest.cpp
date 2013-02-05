@@ -2854,6 +2854,58 @@ TEST(ForEachDescendant, BindsCorrectNodes) {
       new VerifyIdIsBoundTo<FunctionDecl>("decl", 1)));
 }
 
+TEST(FindAll, BindsNodeOnMatch) {
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+      "class A {};",
+      recordDecl(hasName("::A"), findAll(recordDecl(hasName("::A")).bind("v"))),
+      new VerifyIdIsBoundTo<CXXRecordDecl>("v", 1)));
+}
+
+TEST(FindAll, BindsDescendantNodeOnMatch) {
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+      "class A { int a; int b; };",
+      recordDecl(hasName("::A"), findAll(fieldDecl().bind("v"))),
+      new VerifyIdIsBoundTo<FieldDecl>("v", 2)));
+}
+
+TEST(FindAll, BindsNodeAndDescendantNodesOnOneMatch) {
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+      "class A { int a; int b; };",
+      recordDecl(hasName("::A"),
+                 findAll(decl(anyOf(recordDecl(hasName("::A")).bind("v"),
+                                    fieldDecl().bind("v"))))),
+      new VerifyIdIsBoundTo<Decl>("v", 3)));
+
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+      "class A { class B {}; class C {}; };",
+      recordDecl(hasName("::A"), findAll(recordDecl(isDefinition()).bind("v"))),
+      new VerifyIdIsBoundTo<CXXRecordDecl>("v", 3)));
+}
+
+TEST(EachOf, TriggersForEachMatch) {
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+      "class A { int a; int b; };",
+      recordDecl(eachOf(has(fieldDecl(hasName("a")).bind("v")),
+                        has(fieldDecl(hasName("b")).bind("v")))),
+      new VerifyIdIsBoundTo<FieldDecl>("v", 2)));
+}
+
+TEST(EachOf, BehavesLikeAnyOfUnlessBothMatch) {
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+      "class A { int a; int c; };",
+      recordDecl(eachOf(has(fieldDecl(hasName("a")).bind("v")),
+                        has(fieldDecl(hasName("b")).bind("v")))),
+      new VerifyIdIsBoundTo<FieldDecl>("v", 1)));
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+      "class A { int c; int b; };",
+      recordDecl(eachOf(has(fieldDecl(hasName("a")).bind("v")),
+                        has(fieldDecl(hasName("b")).bind("v")))),
+      new VerifyIdIsBoundTo<FieldDecl>("v", 1)));
+  EXPECT_TRUE(notMatches(
+      "class A { int c; int d; };",
+      recordDecl(eachOf(has(fieldDecl(hasName("a")).bind("v")),
+                        has(fieldDecl(hasName("b")).bind("v"))))));
+}
 
 TEST(IsTemplateInstantiation, MatchesImplicitClassTemplateInstantiation) {
   // Make sure that we can both match the class by name (::X) and by the type
@@ -3439,24 +3491,18 @@ TEST(NNSLoc, NestedNameSpecifierLocsAsDescendants) {
       new VerifyIdIsBoundTo<NestedNameSpecifierLoc>("x", 3)));
 }
 
-template <typename T>
-class VerifyRecursiveMatch : public BoundNodesCallback {
+template <typename T> class VerifyMatchOnNode : public BoundNodesCallback {
 public:
-  explicit VerifyRecursiveMatch(StringRef Id,
-                                const internal::Matcher<T> &InnerMatcher)
-      : Id(Id), InnerMatcher(InnerMatcher) {}
-
-  virtual bool run(const BoundNodes *Nodes) {
-    return false;
+  VerifyMatchOnNode(StringRef Id, const internal::Matcher<T> &InnerMatcher)
+      : Id(Id), InnerMatcher(InnerMatcher) {
   }
+
+  virtual bool run(const BoundNodes *Nodes) { return false; }
 
   virtual bool run(const BoundNodes *Nodes, ASTContext *Context) {
     const T *Node = Nodes->getNodeAs<T>(Id);
-    bool Found = false;
-    MatchFinder Finder;
-    Finder.addMatcher(InnerMatcher, new VerifyMatch(0, &Found));
-    Finder.findAll(*Node, *Context);
-    return Found;
+    SmallVector<BoundNodes, 1> Result = match(InnerMatcher, *Node, *Context);
+    return !Result.empty();
   }
 private:
   std::string Id;
@@ -3464,21 +3510,36 @@ private:
 };
 
 TEST(MatchFinder, CanMatchDeclarationsRecursively) {
-  EXPECT_TRUE(matchAndVerifyResultTrue("class X { class Y {}; };",
-    recordDecl(hasName("::X")).bind("X"),
-    new VerifyRecursiveMatch<clang::Decl>("X", recordDecl(hasName("X::Y")))));
-  EXPECT_TRUE(matchAndVerifyResultFalse("class X { class Y {}; };",
-    recordDecl(hasName("::X")).bind("X"),
-    new VerifyRecursiveMatch<clang::Decl>("X", recordDecl(hasName("X::Z")))));
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+      "class X { class Y {}; };", recordDecl(hasName("::X")).bind("X"),
+      new VerifyMatchOnNode<clang::Decl>(
+          "X", decl(hasDescendant(recordDecl(hasName("X::Y")))))));
+  EXPECT_TRUE(matchAndVerifyResultFalse(
+      "class X { class Y {}; };", recordDecl(hasName("::X")).bind("X"),
+      new VerifyMatchOnNode<clang::Decl>(
+          "X", decl(hasDescendant(recordDecl(hasName("X::Z")))))));
 }
 
 TEST(MatchFinder, CanMatchStatementsRecursively) {
-  EXPECT_TRUE(matchAndVerifyResultTrue("void f() { if (1) { for (;;) { } } }",
-    ifStmt().bind("if"),
-    new VerifyRecursiveMatch<clang::Stmt>("if", forStmt())));
-  EXPECT_TRUE(matchAndVerifyResultFalse("void f() { if (1) { for (;;) { } } }",
-    ifStmt().bind("if"),
-    new VerifyRecursiveMatch<clang::Stmt>("if", declStmt())));
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+      "void f() { if (1) { for (;;) { } } }", ifStmt().bind("if"),
+      new VerifyMatchOnNode<clang::Stmt>("if",
+                                         stmt(hasDescendant(forStmt())))));
+  EXPECT_TRUE(matchAndVerifyResultFalse(
+      "void f() { if (1) { for (;;) { } } }", ifStmt().bind("if"),
+      new VerifyMatchOnNode<clang::Stmt>("if",
+                                         stmt(hasDescendant(declStmt())))));
+}
+
+TEST(MatchFinder, CanMatchSingleNodesRecursively) {
+  EXPECT_TRUE(matchAndVerifyResultTrue(
+      "class X { class Y {}; };", recordDecl(hasName("::X")).bind("X"),
+      new VerifyMatchOnNode<clang::Decl>(
+          "X", recordDecl(has(recordDecl(hasName("X::Y")))))));
+  EXPECT_TRUE(matchAndVerifyResultFalse(
+      "class X { class Y {}; };", recordDecl(hasName("::X")).bind("X"),
+      new VerifyMatchOnNode<clang::Decl>(
+          "X", recordDecl(has(recordDecl(hasName("X::Z")))))));
 }
 
 class VerifyStartOfTranslationUnit : public MatchFinder::MatchCallback {

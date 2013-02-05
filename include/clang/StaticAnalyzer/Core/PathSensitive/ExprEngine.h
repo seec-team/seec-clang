@@ -230,8 +230,8 @@ public:
   ///  nodes by processing the 'effects' of a switch statement.
   void processSwitch(SwitchNodeBuilder& builder);
 
-  /// ProcessEndPath - Called by CoreEngine.  Used to generate end-of-path
-  ///  nodes when the control reaches the end of a function.
+  /// Called by CoreEngine.  Used to generate end-of-path
+  /// nodes when the control reaches the end of a function.
   void processEndOfFunction(NodeBuilderContext& BC,
                             ExplodedNode *Pred);
 
@@ -459,9 +459,11 @@ protected:
                 SVal location, SVal Val, bool atDeclInit = false,
                 const ProgramPoint *PP = 0);
 
+  /// Call PointerEscape callback when a value escapes as a result of bind.
   ProgramStateRef processPointerEscapedOnBind(ProgramStateRef State,
                                               SVal Loc, SVal Val);
-
+  /// Call PointerEscape callback when a value escapes as a result of
+  /// region invalidation.
   ProgramStateRef processPointerEscapedOnInvalidateRegions(
                             ProgramStateRef State,
                             const InvalidatedSymbols *Invalidated,
@@ -553,7 +555,7 @@ private:
 struct ReplayWithoutInlining{};
 template <>
 struct ProgramStateTrait<ReplayWithoutInlining> :
-  public ProgramStatePartialTrait<void*> {
+  public ProgramStatePartialTrait<const void*> {
   static void *GDMIndex() { static int index = 0; return &index; }
 };
 

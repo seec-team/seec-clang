@@ -241,15 +241,14 @@ CXXRecordDecl::setBases(CXXBaseSpecifier const * const *Bases,
       //    [...]
       //    -- the constructor selected to copy/move each direct base class
       //       subobject is trivial, and
-      // FIXME: C++0x: We need to only consider the selected constructor
-      // instead of all of them. For now, we treat a move constructor as being
-      // non-trivial if it calls anything other than a trivial move constructor.
       if (!BaseClassDecl->hasTrivialCopyConstructor())
-        data().HasTrivialCopyConstructor = false;
-      if (!BaseClassDecl->hasTrivialMoveConstructor() ||
-          !(BaseClassDecl->hasDeclaredMoveConstructor() ||
-            BaseClassDecl->needsImplicitMoveConstructor()))
-        data().HasTrivialMoveConstructor = false;
+        data().HasTrivialSpecialMembers &= ~SMF_CopyConstructor;
+      // If the base class doesn't have a simple move constructor, we'll eagerly
+      // declare it and perform overload resolution to determine which function
+      // it actually calls. If it does have a simple move constructor, this
+      // check is correct.
+      if (!BaseClassDecl->hasTrivialMoveConstructor())
+        data().HasTrivialSpecialMembers &= ~SMF_MoveConstructor;
 
       // C++0x [class.copy]p27:
       //   A copy/move assignment operator for class X is trivial if [...]
@@ -257,11 +256,13 @@ CXXRecordDecl::setBases(CXXBaseSpecifier const * const *Bases,
       //    -- the assignment operator selected to copy/move each direct base
       //       class subobject is trivial, and
       if (!BaseClassDecl->hasTrivialCopyAssignment())
-        data().HasTrivialCopyAssignment = false;
-      if (!BaseClassDecl->hasTrivialMoveAssignment() ||
-          !(BaseClassDecl->hasDeclaredMoveAssignment() ||
-            BaseClassDecl->needsImplicitMoveAssignment()))
-        data().HasTrivialMoveAssignment = false;
+        data().HasTrivialSpecialMembers &= ~SMF_CopyAssignment;
+      // If the base class doesn't have a simple move assignment, we'll eagerly
+      // declare it and perform overload resolution to determine which function
+      // it actually calls. If it does have a simple move assignment, this
+      // check is correct.
+      if (!BaseClassDecl->hasTrivialMoveAssignment())
+        data().HasTrivialSpecialMembers &= ~SMF_MoveAssignment;
 
       // C++11 [class.ctor]p6:
       //   If that user-written default constructor would satisfy the
@@ -300,6 +301,9 @@ CXXRecordDecl::setBases(CXXBaseSpecifier const * const *Bases,
     // has an Objective-C object member.
     if (BaseClassDecl->hasObjectMember())
       setHasObjectMember(true);
+    
+    if (BaseClassDecl->hasVolatileMember())
+      setHasVolatileMember(true);
 
     // Keep track of the presence of mutable fields.
     if (BaseClassDecl->hasMutableFields())
@@ -499,7 +503,7 @@ void CXXRecordDecl::addedMember(Decl *D) {
     // C++0x [dcl.init.aggr]p1:
     //   An aggregate is an array or a class with no user-provided
     //   constructors [...].
-    if (getASTContext().getLangOpts().CPlusPlus0x
+    if (getASTContext().getLangOpts().CPlusPlus11
           ? UserProvided : !Constructor->isImplicit())
       data().Aggregate = false;
   }
@@ -723,11 +727,12 @@ void CXXRecordDecl::addedMember(Decl *D) {
         //       an array thereof), the constructor selected to copy/move that
         //       member is trivial;
         if (!FieldRec->hasTrivialCopyConstructor())
-          data().HasTrivialCopyConstructor = false;
-        if (!FieldRec->hasTrivialMoveConstructor() ||
-            !(FieldRec->hasDeclaredMoveConstructor() ||
-              FieldRec->needsImplicitMoveConstructor()))
-          data().HasTrivialMoveConstructor = false;
+          data().HasTrivialSpecialMembers &= ~SMF_CopyConstructor;
+        // If the field doesn't have a simple move constructor, we'll eagerly
+        // declare the move constructor for this class and we'll decide whether
+        // it's trivial then.
+        if (!FieldRec->hasTrivialMoveConstructor())
+          data().HasTrivialSpecialMembers &= ~SMF_MoveConstructor;
 
         // C++0x [class.copy]p27:
         //   A copy/move assignment operator for class X is trivial if [...]
@@ -736,11 +741,12 @@ void CXXRecordDecl::addedMember(Decl *D) {
         //       an array thereof), the assignment operator selected to
         //       copy/move that member is trivial;
         if (!FieldRec->hasTrivialCopyAssignment())
-          data().HasTrivialCopyAssignment = false;
-        if (!FieldRec->hasTrivialMoveAssignment() ||
-            !(FieldRec->hasDeclaredMoveAssignment() ||
-              FieldRec->needsImplicitMoveAssignment()))
-          data().HasTrivialMoveAssignment = false;
+          data().HasTrivialSpecialMembers &= ~SMF_CopyAssignment;
+        // If the field doesn't have a simple move assignment, we'll eagerly
+        // declare the move assignment for this class and we'll decide whether
+        // it's trivial then.
+        if (!FieldRec->hasTrivialMoveAssignment())
+          data().HasTrivialSpecialMembers &= ~SMF_MoveAssignment;
 
         if (!FieldRec->hasTrivialDestructor())
           data().HasTrivialSpecialMembers &= ~SMF_Destructor;
@@ -748,6 +754,8 @@ void CXXRecordDecl::addedMember(Decl *D) {
           data().HasIrrelevantDestructor = false;
         if (FieldRec->hasObjectMember())
           setHasObjectMember(true);
+        if (FieldRec->hasVolatileMember())
+          setHasVolatileMember(true);
 
         // C++0x [class]p7:
         //   A standard-layout class is a class that:

@@ -21,13 +21,14 @@
 #include "TargetInfo.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/DeclObjC.h"
-#include "clang/Basic/ConvertUTF.h"
 #include "clang/Frontend/CodeGenOptions.h"
 #include "llvm/ADT/Hashing.h"
-#include "llvm/DataLayout.h"
-#include "llvm/Intrinsics.h"
-#include "llvm/LLVMContext.h"
-#include "llvm/MDBuilder.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/MDBuilder.h"
+#include "llvm/Support/ConvertUTF.h"
+
 using namespace clang;
 using namespace CodeGen;
 
@@ -317,7 +318,8 @@ EmitExprForReferenceBinding(CodeGenFunction &CGF, const Expr *E,
 
     if (InitializedDecl) {
       // Get the destructor for the reference temporary.
-      if (const RecordType *RT = E->getType()->getAs<RecordType>()) {
+      if (const RecordType *RT =
+            E->getType()->getBaseElementTypeUnsafe()->getAs<RecordType>()) {
         CXXRecordDecl *ClassDecl = cast<CXXRecordDecl>(RT->getDecl());
         if (!ClassDecl->hasTrivialDestructor())
           ReferenceTemporaryDtor = ClassDecl->getDestructor();
@@ -420,10 +422,19 @@ CodeGenFunction::EmitReferenceBindingToExpr(const Expr *E,
   const VarDecl *VD = dyn_cast_or_null<VarDecl>(InitializedDecl);
   if (VD && VD->hasGlobalStorage()) {
     if (ReferenceTemporaryDtor) {
-      llvm::Constant *DtorFn =
-        CGM.GetAddrOfCXXDestructor(ReferenceTemporaryDtor, Dtor_Complete);
-      CGM.getCXXABI().registerGlobalDtor(*this, DtorFn,
-                                    cast<llvm::Constant>(ReferenceTemporary));
+      llvm::Constant *CleanupFn;
+      llvm::Constant *CleanupArg;
+      if (E->getType()->isArrayType()) {
+        CleanupFn = CodeGenFunction(CGM).generateDestroyHelper(
+            cast<llvm::Constant>(ReferenceTemporary), E->getType(),
+            destroyCXXObject, getLangOpts().Exceptions);
+        CleanupArg = llvm::Constant::getNullValue(Int8PtrTy);
+      } else {
+        CleanupFn =
+          CGM.GetAddrOfCXXDestructor(ReferenceTemporaryDtor, Dtor_Complete);
+        CleanupArg = cast<llvm::Constant>(ReferenceTemporary);
+      }
+      CGM.getCXXABI().registerGlobalDtor(*this, CleanupFn, CleanupArg);
     } else {
       assert(!ObjCARCReferenceLifetimeType.isNull());
       // Note: We intentionally do not register a global "destructor" to
@@ -433,9 +444,13 @@ CodeGenFunction::EmitReferenceBindingToExpr(const Expr *E,
     return RValue::get(Value);
   }
 
-  if (ReferenceTemporaryDtor)
-    PushDestructorCleanup(ReferenceTemporaryDtor, ReferenceTemporary);
-  else {
+  if (ReferenceTemporaryDtor) {
+    if (E->getType()->isArrayType())
+      pushDestroy(NormalAndEHCleanup, ReferenceTemporary, E->getType(),
+                  destroyCXXObject, getLangOpts().Exceptions);
+    else
+      PushDestructorCleanup(ReferenceTemporaryDtor, ReferenceTemporary);
+  } else {
     switch (ObjCARCReferenceLifetimeType.getObjCLifetime()) {
     case Qualifiers::OCL_None:
       llvm_unreachable(
@@ -502,13 +517,13 @@ void CodeGenFunction::EmitTypeCheck(TypeCheckKind TCK, SourceLocation Loc,
 
   llvm::Value *Cond = 0;
 
-  if (getLangOpts().SanitizeNull) {
+  if (SanOpts->Null) {
     // The glvalue must not be an empty glvalue.
     Cond = Builder.CreateICmpNE(
         Address, llvm::Constant::getNullValue(Address->getType()));
   }
 
-  if (getLangOpts().SanitizeObjectSize && !Ty->isIncompleteType()) {
+  if (SanOpts->ObjectSize && !Ty->isIncompleteType()) {
     uint64_t Size = getContext().getTypeSizeInChars(Ty).getQuantity();
 
     // The glvalue must refer to a large enough storage region.
@@ -525,7 +540,7 @@ void CodeGenFunction::EmitTypeCheck(TypeCheckKind TCK, SourceLocation Loc,
 
   uint64_t AlignVal = 0;
 
-  if (getLangOpts().SanitizeAlignment) {
+  if (SanOpts->Alignment) {
     AlignVal = Alignment.getQuantity();
     if (!Ty->isIncompleteType() && !AlignVal)
       AlignVal = getContext().getTypeAlignInChars(Ty).getQuantity();
@@ -560,7 +575,7 @@ void CodeGenFunction::EmitTypeCheck(TypeCheckKind TCK, SourceLocation Loc,
   //    -- the [pointer or glvalue] is used to access a non-static data member
   //       or call a non-static member function
   CXXRecordDecl *RD = Ty->getAsCXXRecordDecl();
-  if (getLangOpts().SanitizeVptr &&
+  if (SanOpts->Vptr &&
       (TCK == TCK_MemberAccess || TCK == TCK_MemberCall) &&
       RD && RD->hasDefinition() && RD->isDynamicClass()) {
     // Compute a hash of the mangled name of the type.
@@ -568,7 +583,7 @@ void CodeGenFunction::EmitTypeCheck(TypeCheckKind TCK, SourceLocation Loc,
     // FIXME: This is not guaranteed to be deterministic! Move to a
     //        fingerprinting mechanism once LLVM provides one. For the time
     //        being the implementation happens to be deterministic.
-    llvm::SmallString<64> MangledName;
+    SmallString<64> MangledName;
     llvm::raw_svector_ostream Out(MangledName);
     CGM.getCXXABI().getMangleContext().mangleCXXRTTI(Ty.getUnqualifiedType(),
                                                      Out);
@@ -1055,8 +1070,8 @@ llvm::Value *CodeGenFunction::EmitLoadOfScalar(llvm::Value *Addr, bool Volatile,
   if (Ty->isAtomicType())
     Load->setAtomic(llvm::SequentiallyConsistent);
 
-  if ((getLangOpts().SanitizeBool && hasBooleanRepresentation(Ty)) ||
-      (getLangOpts().SanitizeEnum && Ty->getAs<EnumType>())) {
+  if ((SanOpts->Bool && hasBooleanRepresentation(Ty)) ||
+      (SanOpts->Enum && Ty->getAs<EnumType>())) {
     llvm::APInt Min, End;
     if (getRangeForType(*this, Ty, Min, End, true)) {
       --End;
@@ -1122,7 +1137,7 @@ void CodeGenFunction::EmitStoreOfScalar(llvm::Value *Value, llvm::Value *Addr,
       llvm::LLVMContext &VMContext = getLLVMContext();
 
       // Our source is a vec3, do a shuffle vector to make it a vec4.
-      llvm::SmallVector<llvm::Constant*, 4> Mask;
+      SmallVector<llvm::Constant*, 4> Mask;
       Mask.push_back(llvm::ConstantInt::get(
                                             llvm::Type::getInt32Ty(VMContext),
                                             0));
@@ -1224,7 +1239,7 @@ RValue CodeGenFunction::EmitLoadOfBitfieldLValue(LValue LV) {
   cast<llvm::LoadInst>(Val)->setAlignment(Info.StorageAlignment);
 
   if (Info.IsSigned) {
-    assert((Info.Offset + Info.Size) <= Info.StorageSize);
+    assert(static_cast<unsigned>(Info.Offset + Info.Size) <= Info.StorageSize);
     unsigned HighBits = Info.StorageSize - Info.Offset - Info.Size;
     if (HighBits)
       Val = Builder.CreateShl(Val, HighBits, "bf.shl");
@@ -1616,9 +1631,6 @@ EmitBitCastOfLValueToProperType(CodeGenFunction &CGF,
 
 static LValue EmitGlobalVarDeclLValue(CodeGenFunction &CGF,
                                       const Expr *E, const VarDecl *VD) {
-  assert((VD->hasExternalStorage() || VD->isFileVarDecl()) &&
-         "Var decl must have external storage or be a file var decl!");
-
   llvm::Value *V = CGF.CGM.GetAddrOfGlobalVar(VD);
   llvm::Type *RealVarTy = CGF.getTypes().ConvertTypeForMem(VD->getType());
   V = EmitBitCastOfLValueToProperType(CGF, V, RealVarTy);
@@ -1691,7 +1703,7 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
 
   if (const VarDecl *VD = dyn_cast<VarDecl>(ND)) {
     // Check if this is a global variable.
-    if (VD->hasExternalStorage() || VD->isFileVarDecl())
+    if (VD->hasLinkage() || VD->isStaticDataMember())
       return EmitGlobalVarDeclLValue(*this, E, VD);
 
     bool isBlockVariable = VD->hasAttr<BlocksAttr>();
@@ -1700,8 +1712,8 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
                      !VD->getType()->isReferenceType() &&
                      !isBlockVariable;
 
-    llvm::Value *V = LocalDeclMap[VD];
-    if (!V && VD->isStaticLocal())
+    llvm::Value *V = LocalDeclMap.lookup(VD);
+    if (!V && VD->isStaticLocal()) 
       V = CGM.getStaticLocalDeclAddress(VD);
 
     // Use special handling for lambdas.
@@ -1944,7 +1956,7 @@ llvm::Constant *CodeGenFunction::EmitCheckTypeDescriptor(QualType T) {
 
   // Format the type name as if for a diagnostic, including quotes and
   // optionally an 'aka'.
-  llvm::SmallString<32> Buffer;
+  SmallString<32> Buffer;
   CGM.getDiags().ConvertArgToString(DiagnosticsEngine::ak_qualtype,
                                     (intptr_t)T.getAsOpaquePtr(),
                                     0, 0, 0, 0, 0, 0, Buffer,
@@ -2007,9 +2019,17 @@ llvm::Constant *CodeGenFunction::EmitCheckSourceLocation(SourceLocation Loc) {
 }
 
 void CodeGenFunction::EmitCheck(llvm::Value *Checked, StringRef CheckName,
-                                llvm::ArrayRef<llvm::Constant *> StaticArgs,
-                                llvm::ArrayRef<llvm::Value *> DynamicArgs,
+                                ArrayRef<llvm::Constant *> StaticArgs,
+                                ArrayRef<llvm::Value *> DynamicArgs,
                                 CheckRecoverableKind RecoverKind) {
+  assert(SanOpts != &SanitizerOptions::Disabled);
+
+  if (CGM.getCodeGenOpts().SanitizeUndefinedTrapOnError) {
+    assert (RecoverKind != CRK_AlwaysRecoverable &&
+            "Runtime call required for AlwaysRecoverable kind!");
+    return EmitTrapCheck(Checked);
+  }
+
   llvm::BasicBlock *Cont = createBasicBlock("cont");
 
   llvm::BasicBlock *Handler = createBasicBlock("handler." + CheckName);
@@ -2026,12 +2046,12 @@ void CodeGenFunction::EmitCheck(llvm::Value *Checked, StringRef CheckName,
 
   llvm::Constant *Info = llvm::ConstantStruct::getAnon(StaticArgs);
   llvm::GlobalValue *InfoPtr =
-      new llvm::GlobalVariable(CGM.getModule(), Info->getType(), true,
+      new llvm::GlobalVariable(CGM.getModule(), Info->getType(), false,
                                llvm::GlobalVariable::PrivateLinkage, Info);
   InfoPtr->setUnnamedAddr(true);
 
-  llvm::SmallVector<llvm::Value *, 4> Args;
-  llvm::SmallVector<llvm::Type *, 4> ArgTypes;
+  SmallVector<llvm::Value *, 4> Args;
+  SmallVector<llvm::Type *, 4> ArgTypes;
   Args.reserve(DynamicArgs.size() + 1);
   ArgTypes.reserve(DynamicArgs.size() + 1);
 
@@ -2065,7 +2085,9 @@ void CodeGenFunction::EmitCheck(llvm::Value *Checked, StringRef CheckName,
                               (NeedsAbortSuffix? "_abort" : "")).str();
   llvm::Value *Fn =
     CGM.CreateRuntimeFunction(FnType, FunctionName,
-                              llvm::Attribute::get(getLLVMContext(), B));
+                              llvm::AttributeSet::get(getLLVMContext(),
+                                              llvm::AttributeSet::FunctionIndex,
+                                                      B));
   llvm::CallInst *HandlerCall = Builder.CreateCall(Fn, Args);
   if (Recover) {
     Builder.CreateBr(Cont);
@@ -2078,7 +2100,7 @@ void CodeGenFunction::EmitCheck(llvm::Value *Checked, StringRef CheckName,
   EmitBlock(Cont);
 }
 
-void CodeGenFunction::EmitTrapvCheck(llvm::Value *Checked) {
+void CodeGenFunction::EmitTrapCheck(llvm::Value *Checked) {
   llvm::BasicBlock *Cont = createBasicBlock("cont");
 
   // If we're optimizing, collapse all calls to trap down to just one per
@@ -2674,6 +2696,8 @@ LValue CodeGenFunction::EmitCastLValue(const CastExpr *E) {
                                            ConvertType(ToType));
     return MakeAddrLValue(V, E->getType());
   }
+  case CK_ZeroToOCLEvent:
+    llvm_unreachable("NULL to OpenCL event lvalue cast is not valid");
   }
 
   llvm_unreachable("Unhandled lvalue cast kind?");
@@ -3296,7 +3320,7 @@ RValue CodeGenFunction::EmitAtomicExpr(AtomicExpr *E, llvm::Value *Dest) {
   // Use a library call.  See: http://gcc.gnu.org/wiki/Atomic/GCCMM/LIbrary .
   if (UseLibcall) {
 
-    llvm::SmallVector<QualType, 5> Params;
+    SmallVector<QualType, 5> Params;
     CallArgList Args;
     // Size is always the first parameter
     Args.add(RValue::get(llvm::ConstantInt::get(SizeTy, Size)),
@@ -3521,7 +3545,7 @@ static LValueOrRValue emitPseudoObjectExpr(CodeGenFunction &CGF,
                                            const PseudoObjectExpr *E,
                                            bool forLValue,
                                            AggValueSlot slot) {
-  llvm::SmallVector<CodeGenFunction::OpaqueValueMappingData, 4> opaques;
+  SmallVector<CodeGenFunction::OpaqueValueMappingData, 4> opaques;
 
   // Find the result expression, if any.
   const Expr *resultExpr = E->getResultExpr();

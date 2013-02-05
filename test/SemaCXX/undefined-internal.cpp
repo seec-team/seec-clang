@@ -181,3 +181,53 @@ namespace OverloadUse {
   template<void x(int)> void t(long*) { x(10); } // expected-note {{used here}}
   void g() { long a; t<f>(&a); }
 }
+
+namespace test7 {
+  typedef struct {
+    void bar();
+    void foo() {
+      bar();
+    }
+  } A;
+}
+
+namespace test8 {
+  typedef struct {
+    void bar(); // expected-warning {{function 'test8::<anonymous struct>::bar' has internal linkage but is not defined}}
+    void foo() {
+      bar(); // expected-note {{used here}}
+    }
+  } *A;
+}
+
+namespace test9 {
+  namespace {
+    struct X {
+      virtual void notused() = 0;
+      virtual void used() = 0; // expected-warning {{function 'test9::<anonymous namespace>::X::used' has internal linkage but is not defined}}
+    };
+  }
+  void test(X &x) {
+    x.notused();
+    x.X::used(); // expected-note {{used here}}
+  }
+}
+
+namespace test10 {
+  namespace {
+    struct X {
+      virtual void notused() = 0;
+      virtual void used() = 0; // expected-warning {{function 'test10::<anonymous namespace>::X::used' has internal linkage but is not defined}}
+
+      void test() {
+        notused();
+        (void)&X::notused;
+        (this->*&X::notused)();
+        X::used();  // expected-note {{used here}}
+      }
+    };
+    struct Y : X {
+      using X::notused;
+    };
+  }
+}

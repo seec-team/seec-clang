@@ -200,6 +200,12 @@ void MultiplexExternalSemaSource::ReadKnownNamespaces(
   for(size_t i = 0; i < Sources.size(); ++i)
     Sources[i]->ReadKnownNamespaces(Namespaces);
 }
+
+void MultiplexExternalSemaSource::ReadUndefinedButUsed(
+                         llvm::DenseMap<NamedDecl*, SourceLocation> &Undefined){
+  for(size_t i = 0; i < Sources.size(); ++i)
+    Sources[i]->ReadUndefinedButUsed(Undefined);
+}
   
 bool MultiplexExternalSemaSource::LookupUnqualified(LookupResult &R, Scope *S){ 
   for(size_t i = 0; i < Sources.size(); ++i)
@@ -238,10 +244,10 @@ void MultiplexExternalSemaSource::ReadDynamicClasses(
     Sources[i]->ReadDynamicClasses(Decls);
 }
 
-void MultiplexExternalSemaSource::ReadLocallyScopedExternalDecls(
+void MultiplexExternalSemaSource::ReadLocallyScopedExternCDecls(
                                            SmallVectorImpl<NamedDecl*> &Decls) {
   for(size_t i = 0; i < Sources.size(); ++i)
-    Sources[i]->ReadLocallyScopedExternalDecls(Decls);
+    Sources[i]->ReadLocallyScopedExternCDecls(Decls);
 }
 
 void MultiplexExternalSemaSource::ReadReferencedSelectors(

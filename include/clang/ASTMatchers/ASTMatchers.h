@@ -922,6 +922,16 @@ const internal::VariadicDynCastAllOfMatcher<
   Stmt,
   UserDefinedLiteral> userDefinedLiteral;
 
+/// \brief Matches compound (i.e. non-scalar) literals
+///
+/// Example match: {1}, (1, 2)
+/// \code
+///   int array[4] = {1}; vector int myvec = (vector int)(1, 2);
+/// \endcode
+const internal::VariadicDynCastAllOfMatcher<
+  Stmt,
+  CompoundLiteralExpr> compoundLiteralExpr;
+
 /// \brief Matches nullptr literal.
 const internal::VariadicDynCastAllOfMatcher<
   Stmt,
@@ -1095,6 +1105,32 @@ const internal::VariadicDynCastAllOfMatcher<Type, Type> type;
 /// \brief Matches \c TypeLocs in the clang AST.
 const internal::VariadicDynCastAllOfMatcher<TypeLoc, TypeLoc> typeLoc;
 
+/// \brief Matches if any of the given matchers matches.
+///
+/// Unlike \c anyOf, \c eachOf will generate a match result for each
+/// matching submatcher.
+///
+/// For example, in:
+/// \code
+///   class A { int a; int b; };
+/// \endcode
+/// The matcher:
+/// \code
+///   recordDecl(eachOf(has(fieldDecl(hasName("a")).bind("v")),
+///                     has(fieldDecl(hasName("b")).bind("v"))))
+/// \endcode
+/// will generate two results binding "v", the first of which binds
+/// the field declaration of \c a, the second the field declaration of
+/// \c b.
+///
+/// Usable as: Any Matcher
+template <typename M1, typename M2>
+internal::PolymorphicMatcherWithParam2<internal::EachOfMatcher, M1, M2>
+eachOf(const M1 &P1, const M2 &P2) {
+  return internal::PolymorphicMatcherWithParam2<internal::EachOfMatcher, M1,
+                                                M2>(P1, P2);
+}
+
 /// \brief Various overloads for the anyOf matcher.
 /// @{
 
@@ -1228,8 +1264,8 @@ inline internal::Matcher<Stmt> sizeOfExpr(
 AST_MATCHER_P(NamedDecl, hasName, std::string, Name) {
   assert(!Name.empty());
   const std::string FullNameString = "::" + Node.getQualifiedNameAsString();
-  const llvm::StringRef FullName = FullNameString;
-  const llvm::StringRef Pattern = Name;
+  const StringRef FullName = FullNameString;
+  const StringRef Pattern = Name;
   if (Pattern.startswith("::")) {
     return FullName == Pattern;
   } else {
@@ -1424,6 +1460,29 @@ forEachDescendant(
     DescendantT>(DescendantMatcher);
 }
 
+/// \brief Matches if the node or any descendant matches.
+///
+/// Generates results for each match.
+///
+/// For example, in:
+/// \code
+///   class A { class B {}; class C {}; };
+/// \endcode
+/// The matcher:
+/// \code
+///   recordDecl(hasName("::A"), findAll(recordDecl(isDefinition()).bind("m")))
+/// \endcode
+/// will generate results for \c A, \c B and \c C.
+///
+/// Usable as: Any Matcher
+template <typename T>
+internal::PolymorphicMatcherWithParam2<
+    internal::EachOfMatcher, internal::Matcher<T>,
+    internal::ArgumentAdaptingMatcher<internal::ForEachDescendantMatcher, T> >
+findAll(const internal::Matcher<T> &Matcher) {
+  return eachOf(Matcher, forEachDescendant(Matcher));
+}
+
 /// \brief Matches AST nodes that have a parent that matches the provided
 /// matcher.
 ///
@@ -1501,9 +1560,8 @@ inline internal::PolymorphicMatcherWithParam1< internal::HasDeclarationMatcher,
 /// FIXME: Overload to allow directly matching types?
 AST_MATCHER_P(CXXMemberCallExpr, on, internal::Matcher<Expr>,
               InnerMatcher) {
-  const Expr *ExprNode = const_cast<CXXMemberCallExpr&>(Node)
-      .getImplicitObjectArgument()
-      ->IgnoreParenImpCasts();
+  const Expr *ExprNode = Node.getImplicitObjectArgument()
+                            ->IgnoreParenImpCasts();
   return (ExprNode != NULL &&
           InnerMatcher.matches(*ExprNode, Finder, Builder));
 }
@@ -1649,8 +1707,7 @@ inline internal::Matcher<QualType> references(
 
 AST_MATCHER_P(CXXMemberCallExpr, onImplicitObjectArgument,
               internal::Matcher<Expr>, InnerMatcher) {
-  const Expr *ExprNode =
-      const_cast<CXXMemberCallExpr&>(Node).getImplicitObjectArgument();
+  const Expr *ExprNode = Node.getImplicitObjectArgument();
   return (ExprNode != NULL &&
           InnerMatcher.matches(*ExprNode, Finder, Builder));
 }
@@ -1705,8 +1762,7 @@ AST_MATCHER_P(DeclRefExpr, to, internal::Matcher<Decl>,
 AST_MATCHER_P(DeclRefExpr, throughUsingDecl,
               internal::Matcher<UsingShadowDecl>, InnerMatcher) {
   const NamedDecl *FoundDecl = Node.getFoundDecl();
-  if (const UsingShadowDecl *UsingDecl =
-      llvm::dyn_cast<UsingShadowDecl>(FoundDecl))
+  if (const UsingShadowDecl *UsingDecl = dyn_cast<UsingShadowDecl>(FoundDecl))
     return InnerMatcher.matches(*UsingDecl, Finder, Builder);
   return false;
 }

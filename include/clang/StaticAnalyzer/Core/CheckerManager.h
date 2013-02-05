@@ -264,11 +264,11 @@ public:
   void runCheckersForEndAnalysis(ExplodedGraph &G, BugReporter &BR,
                                  ExprEngine &Eng);
 
-  /// \brief Run checkers for end of path.
-  void runCheckersForEndPath(NodeBuilderContext &BC,
-                             ExplodedNodeSet &Dst,
-                             ExplodedNode *Pred,
-                             ExprEngine &Eng);
+  /// \brief Run checkers on end of function.
+  void runCheckersForEndFunction(NodeBuilderContext &BC,
+                                 ExplodedNodeSet &Dst,
+                                 ExplodedNode *Pred,
+                                 ExprEngine &Eng);
 
   /// \brief Run checkers for branch condition.
   void runCheckersForBranchCondition(const Stmt *condition,
@@ -318,22 +318,23 @@ public:
   /// \brief Run checkers when pointers escape.
   ///
   /// This notifies the checkers about pointer escape, which occurs whenever
-  /// the analzyer cannot track the symbol any more. For example, as a
+  /// the analyzer cannot track the symbol any more. For example, as a
   /// result of assigning a pointer into a global or when it's passed to a 
   /// function call the analyzer cannot model.
   /// 
   /// \param State The state at the point of escape.
   /// \param Escaped The list of escaped symbols.
   /// \param Call The corresponding CallEvent, if the symbols escape as 
-  /// parameters to the given call.
+  ///        parameters to the given call.
   /// \returns Checkers can modify the state by returning a new one.
-  ProgramStateRef runCheckersForPointerEscape(ProgramStateRef State,
-                                             const InvalidatedSymbols &Escaped,
-                                             const CallEvent *Call);
+  ProgramStateRef 
+  runCheckersForPointerEscape(ProgramStateRef State,
+                              const InvalidatedSymbols &Escaped,
+                              const CallEvent *Call);
 
   /// \brief Run checkers for handling assumptions on symbolic values.
   ProgramStateRef runCheckersForEvalAssume(ProgramStateRef state,
-                                               SVal Cond, bool Assumption);
+                                           SVal Cond, bool Assumption);
 
   /// \brief Run checkers for evaluating a call.
   ///
@@ -398,7 +399,7 @@ public:
       CheckEndAnalysisFunc;
   
   typedef CheckerFn<void (CheckerContext &)>
-      CheckEndPathFunc;
+      CheckEndFunctionFunc;
   
   typedef CheckerFn<void (const Stmt *, CheckerContext &)>
       CheckBranchConditionFunc;
@@ -451,7 +452,7 @@ public:
 
   void _registerForEndAnalysis(CheckEndAnalysisFunc checkfn);
 
-  void _registerForEndPath(CheckEndPathFunc checkfn);
+  void _registerForEndFunction(CheckEndFunctionFunc checkfn);
 
   void _registerForBranchCondition(CheckBranchConditionFunc checkfn);
 
@@ -575,7 +576,7 @@ private:
 
   std::vector<CheckEndAnalysisFunc> EndAnalysisCheckers;
 
-  std::vector<CheckEndPathFunc> EndPathCheckers;
+  std::vector<CheckEndFunctionFunc> EndFunctionCheckers;
 
   std::vector<CheckBranchConditionFunc> BranchConditionCheckers;
 

@@ -77,7 +77,7 @@ public:
                                    bool BeforePreviousInsertions = false) {
     FixItHint Hint;
     Hint.RemoveRange =
-      CharSourceRange(SourceRange(InsertionLoc, InsertionLoc), false);
+      CharSourceRange::getCharRange(InsertionLoc, InsertionLoc);
     Hint.CodeToInsert = Code;
     Hint.BeforePreviousInsertions = BeforePreviousInsertions;
     return Hint;
@@ -90,7 +90,7 @@ public:
                                         bool BeforePreviousInsertions = false) {
     FixItHint Hint;
     Hint.RemoveRange =
-      CharSourceRange(SourceRange(InsertionLoc, InsertionLoc), false);
+      CharSourceRange::getCharRange(InsertionLoc, InsertionLoc);
     Hint.InsertFromRange = FromRange;
     Hint.BeforePreviousInsertions = BeforePreviousInsertions;
     return Hint;
@@ -605,6 +605,12 @@ public:
   void SetArgToStringFn(ArgToStringFnTy Fn, void *Cookie) {
     ArgToStringFn = Fn;
     ArgToStringCookie = Cookie;
+  }
+
+  /// \brief Note that the prior diagnostic was emitted by some other
+  /// \c DiagnosticsEngine, and we may be attaching a note to that diagnostic.
+  void notePriorDiagnosticFrom(const DiagnosticsEngine &Other) {
+    LastDiagLevel = Other.LastDiagLevel;
   }
 
   /// \brief Reset the state of the diagnostic object to its initial 

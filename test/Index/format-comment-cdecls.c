@@ -1,6 +1,5 @@
 // RUN: rm -rf %t
 // RUN: mkdir %t
-// RUN: env LIBCLANG_ACTIVATE_FORMAT=1 \
 // RUN: c-index-test -test-load-source all -comments-xml-schema=%S/../../bindings/xml/comment-xml-schema.rng -target x86_64-apple-darwin10 %s \ 
 // RUN: | FileCheck %s 
 
@@ -69,7 +68,7 @@ struct S {
 */
   double dS1;
 };
-// CHECK: <Declaration>struct S {\n}</Declaration>
+// CHECK: <Declaration>struct S {}</Declaration>
 // CHECK: <Declaration>int iS1</Declaration>
 // CHECK: <Declaration>double dS1</Declaration>
 
@@ -84,7 +83,7 @@ enum e {
   Two,
   Three
 };
-// CHECK: <Declaration>enum e {\n}</Declaration>
+// CHECK: <Declaration>enum e {}</Declaration>
 // CHECK: <Declaration>Two</Declaration>
 
 /**
@@ -97,4 +96,4 @@ int (^Block) (int i, int j);
  *\brief block declaration
 */
 int (^Block1) (int i, int j) = ^(int i, int j) { return i + j; };
-// CHECK: <Declaration>int (^ Block1) (int, int) = ^ (int i, int j) {\n}</Declaration>
+// CHECK: <Declaration>int (^Block1)(int, int) = ^(int i, int j) {}</Declaration>

@@ -68,6 +68,7 @@ namespace clang {
     TST_image2d_t,        // OpenCL image2d_t
     TST_image2d_array_t,  // OpenCL image2d_array_t
     TST_image3d_t,        // OpenCL image3d_t
+    TST_event_t,          // OpenCL event_t
     TST_error         // erroneous type
   };
   
@@ -192,7 +193,8 @@ namespace clang {
     CC_X86Pascal,   // __attribute__((pascal))
     CC_AAPCS,       // __attribute__((pcs("aapcs")))
     CC_AAPCS_VFP,   // __attribute__((pcs("aapcs-vfp")))
-    CC_PnaclCall    // __attribute__((pnaclcall))
+    CC_PnaclCall,   // __attribute__((pnaclcall))
+    CC_IntelOclBicc // __attribute__((intel_ocl_bicc))
   };
 
 } // end namespace clang

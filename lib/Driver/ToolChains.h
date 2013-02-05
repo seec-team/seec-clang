@@ -143,21 +143,6 @@ protected:
   /// @}
 };
 
-class LLVM_LIBRARY_VISIBILITY Hexagon_TC : public ToolChain {
-protected:
-  mutable llvm::DenseMap<unsigned, Tool*> Tools;
-
-public:
-  Hexagon_TC(const Driver &D, const llvm::Triple& Triple);
-  ~Hexagon_TC();
-
-  virtual Tool &SelectTool(const Compilation &C, const JobAction &JA,
-                           const ActionList &Inputs) const;
-
-  virtual bool isPICDefault() const;
-  virtual bool isPICDefaultForced() const;
-};
-
   /// Darwin - The base Darwin tool chain.
 class LLVM_LIBRARY_VISIBILITY Darwin : public ToolChain {
 public:
@@ -392,7 +377,7 @@ public:
   std::string ComputeEffectiveClangTriple(const ArgList &Args,
                                           types::ID InputType) const;
 
-  virtual bool isPICDefault() const { return false; };
+  virtual bool isPICDefault() const { return false; }
 };
 
 class LLVM_LIBRARY_VISIBILITY Generic_ELF : public Generic_GCC {
@@ -403,7 +388,8 @@ public:
 
   virtual bool IsIntegratedAssemblerDefault() const {
     // Default integrated assembler to on for x86.
-    return (getTriple().getArch() == llvm::Triple::x86 ||
+    return (getTriple().getArch() == llvm::Triple::aarch64 ||
+            getTriple().getArch() == llvm::Triple::x86 ||
             getTriple().getArch() == llvm::Triple::x86_64);
   }
 };

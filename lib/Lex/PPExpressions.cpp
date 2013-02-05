@@ -230,7 +230,7 @@ static bool EvaluateValue(PPValue &Result, Token &PeekTok, DefinedTracker &DT,
     if (!PP.getLangOpts().C99 && Literal.isLongLong) {
       if (PP.getLangOpts().CPlusPlus)
         PP.Diag(PeekTok,
-             PP.getLangOpts().CPlusPlus0x ?
+             PP.getLangOpts().CPlusPlus11 ?
              diag::warn_cxx98_compat_longlong : diag::ext_cxx11_longlong);
       else
         PP.Diag(PeekTok, diag::ext_c99_longlong);
@@ -264,9 +264,9 @@ static bool EvaluateValue(PPValue &Result, Token &PeekTok, DefinedTracker &DT,
     return false;
   }
   case tok::char_constant:          // 'x'
-  case tok::wide_char_constant: {   // L'x'
+  case tok::wide_char_constant:     // L'x'
   case tok::utf16_char_constant:    // u'x'
-  case tok::utf32_char_constant:    // U'x'
+  case tok::utf32_char_constant: {  // U'x'
     // Complain about, and drop, any ud-suffix.
     if (PeekTok.hasUDSuffix())
       PP.Diag(PeekTok, diag::err_pp_invalid_udl) << /*character*/0;
