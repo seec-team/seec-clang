@@ -18,6 +18,8 @@
 
 #include "CGValue.h"
 
+#include <cassert>
+
 #define SEEC_CLANG_DEBUG 0
 
 namespace clang {
@@ -31,6 +33,57 @@ namespace seec {
 class MetadataInserter
 {
 private:
+  /// \brief A reference to a single Stmt or Decl.
+  ///
+  class NodeRef {
+    enum NodeKind { NRDecl, NRStmt };
+    
+    NodeKind Kind;
+    
+    union {
+      ::clang::Decl const *Declaration;
+      
+      ::clang::Stmt const *Statement;
+    };
+    
+  public:
+    /// \brief Construct a NodeRef for a Decl.
+    NodeRef(::clang::Decl const *D)
+    : Kind(NRDecl),
+      Declaration(D)
+    {}
+    
+    /// \brief Construct a NodeRef for a Stmt.
+    NodeRef(::clang::Stmt const *S)
+    : Kind(NRStmt),
+      Statement(S)
+    {}
+    
+    /// \brief Copy constructor.
+    NodeRef(NodeRef const &) = default;
+    
+    /// \brief Copy assignment.
+    NodeRef &operator=(NodeRef const &) = default;
+    
+    /// \brief Check if this NodeRef is a Decl.
+    bool isDecl() const { return Kind == NRDecl; }
+    
+    /// \brief Check if this NodeRef is a Stmt.
+    bool isStmt() const { return Kind == NRStmt; }
+    
+    /// \brief Get the Decl from this NodeRef.
+    ::clang::Decl const *getDecl() const {
+      assert(Kind == NRDecl);
+      return Declaration;
+    }
+    
+    /// \brief Get the Stmt from this NodeRef.
+    ::clang::Stmt const *getStmt() const {
+      assert(Kind == NRStmt);
+      return Statement;
+    }
+  };
+    
   //----------------------------------------------------------------------------
   // Members
   //----------------------------------------------------------------------------
@@ -41,11 +94,14 @@ private:
   /// The LLVMContext we're working with.
   llvm::LLVMContext &Context;
 
-  /// Kind of metadata we attach to llvm::Instructions.
-  unsigned MDMapKindID;
+  /// Kind of metadata for pointers to Stmt.
+  unsigned MDKindIDForStmtPtr;
+  
+  /// Kind of metadata for pointers to Delc.
+  unsigned MDKindIDForDeclPtr;
 
-  /// Stack of the current clang::Stmt pointers.
-  llvm::SmallVector<Stmt const *, 32> StmtStack;
+  /// Stack of the current node references.
+  llvm::SmallVector<NodeRef, 32> NodeStack;
   
   /// Creates metadata to describe statement mappings.
   ::seec::clang::StmtMapping::MetadataWriter MDWriter;
@@ -76,8 +132,9 @@ public:
   MetadataInserter(llvm::Module &TheModule)
   : Module(TheModule),
     Context(Module.getContext()),
-    MDMapKindID(Context.getMDKindID("seec.clang.stmt.ptr")),
-    StmtStack(),
+    MDKindIDForStmtPtr(Context.getMDKindID("seec.clang.stmt.ptr")),
+    MDKindIDForDeclPtr(Context.getMDKindID("seec.clang.decl.ptr")),
+    NodeStack(),
     MDWriter(Context),
     MDMappings()
   {
@@ -99,25 +156,61 @@ public:
       GlobalMD->addOperand(*It);
     }
   }
+  
+  void pushDecl(Decl const *D) {
+    if (SEEC_CLANG_DEBUG) {
+      for (std::size_t i = 0; i < NodeStack.size(); ++i)
+        llvm::outs() << " ";
+      llvm::outs() << "Decl " << D->getDeclKindName() << "\n";
+    }
+
+    NodeStack.push_back(NodeRef(D));
+  }
+  
+  void popDecl() {
+    assert(NodeStack.size() && NodeStack.back().isDecl());
+    NodeStack.pop_back();
+  }
 
   void pushStmt(Stmt const *S) {
-    StmtStack.push_back(S);
+    if (SEEC_CLANG_DEBUG) {
+      for (std::size_t i = 0; i < NodeStack.size(); ++i)
+        llvm::outs() << " ";
+      llvm::outs() << "Stmt " << S->getStmtClassName() << "\n";
+    }
+
+    NodeStack.push_back(NodeRef(S));
   }
 
   void popStmt() {
-    StmtStack.pop_back();
+    assert(NodeStack.size() && NodeStack.back().isStmt());
+    NodeStack.pop_back();
   }
 
   void attachMetadata(llvm::Instruction *I) {
-    if (!StmtStack.empty()) {
-      // Make a constant int holding the address of the current Stmt
-      uintptr_t PtrInt = reinterpret_cast<uintptr_t>(StmtStack.back());
+    if (NodeStack.empty())
+      return;
+    
+    NodeRef const &Node = NodeStack.back();
+    
+    if (Node.isStmt()) {
+      // Make a constant int holding the address of the Stmt.
+      uintptr_t const PtrInt = reinterpret_cast<uintptr_t>(Node.getStmt());
       llvm::Type *i64 = llvm::Type::getInt64Ty(Context);
       llvm::Value *StmtAddr = llvm::ConstantInt::get(i64, PtrInt);
-      I->setMetadata(MDMapKindID, llvm::MDNode::get(Context, StmtAddr));
+      I->setMetadata(MDKindIDForStmtPtr, llvm::MDNode::get(Context, StmtAddr));
+    }
+    else if (Node.isDecl()) {
+      // Make a constant int holding the address of the Decl.
+      uintptr_t const PtrInt = reinterpret_cast<uintptr_t>(Node.getDecl());
+      llvm::Type *i64 = llvm::Type::getInt64Ty(Context);
+      llvm::Value *DeclAddr = llvm::ConstantInt::get(i64, PtrInt);
+      I->setMetadata(MDKindIDForDeclPtr, llvm::MDNode::get(Context, DeclAddr));
     }
   }
 
+  /// \brief Mark an LValue produced by the given Stmt.
+  ///
   void markLValue(LValue const &Value, Stmt const *S) {
     if (SEEC_CLANG_DEBUG) {
       llvm::errs() << "mark lvalue for " << S->getStmtClassName();
@@ -148,6 +241,8 @@ public:
     }
   }
 
+  /// \brief Mark an RValue produced by the given Stmt.
+  ///
   void markRValue(RValue const &Value, Stmt const *S) {
     if (SEEC_CLANG_DEBUG) {
       llvm::errs() << "mark rvalue for " << S->getStmtClassName();
@@ -186,12 +281,14 @@ public:
   }
 };
 
+/// \brief Convenience class that pushes a Stmt for the object's lifetime.
+///
 class PushStmtForScope {
 private:
   MetadataInserter &MDInserter;
 
   PushStmtForScope(PushStmtForScope const &Other);
-  PushStmtForScope & operator= (PushStmtForScope const &RHS);
+  PushStmtForScope & operator=(PushStmtForScope const &RHS);
 
 public:
   PushStmtForScope(MetadataInserter &MDInserter, Stmt const *S)
@@ -202,6 +299,27 @@ public:
 
   ~PushStmtForScope() {
     MDInserter.popStmt();
+  }
+};
+
+/// \brief Convenience class that pushes a Decl for the object's lifetime.
+///
+class PushDeclForScope {
+private:
+  MetadataInserter &MDInserter;
+
+  PushDeclForScope(PushDeclForScope const &Other);
+  PushDeclForScope & operator=(PushDeclForScope const &RHS);
+
+public:
+  PushDeclForScope(MetadataInserter &MDInserter, Decl const *D)
+  : MDInserter(MDInserter)
+  {
+    MDInserter.pushDecl(D);
+  }
+
+  ~PushDeclForScope() {
+    MDInserter.popDecl();
   }
 };
 

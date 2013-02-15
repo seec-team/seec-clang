@@ -31,6 +31,8 @@ using namespace CodeGen;
 
 
 void CodeGenFunction::EmitDecl(const Decl &D) {
+  seec::PushDeclForScope X(MDInserter, &D);
+  
   switch (D.getKind()) {
   case Decl::TranslationUnit:
   case Decl::Namespace:
@@ -1011,6 +1013,8 @@ void CodeGenFunction::EmitAutoVarInit(const AutoVarEmission &emission) {
 
   // If this local has an initializer, emit it now.
   const Expr *Init = D.getInit();
+  
+  seec::PushStmtForScope SeeCPush(MDInserter, Init);
 
   // If we are at an unreachable point, we don't need to emit the initializer
   // unless it contains a label.
