@@ -59,12 +59,6 @@ private:
       Statement(S)
     {}
     
-    /// \brief Copy constructor.
-    NodeRef(NodeRef const &) = default;
-    
-    /// \brief Copy assignment.
-    NodeRef &operator=(NodeRef const &) = default;
-    
     /// \brief Check if this NodeRef is a Decl.
     bool isDecl() const { return Kind == NRDecl; }
     
