@@ -20,7 +20,7 @@
 
 #include <cassert>
 
-#define SEEC_CLANG_DEBUG 0
+#define SEEC_CLANG_DEBUG 1
 
 namespace clang {
 
@@ -152,6 +152,8 @@ public:
   }
   
   void pushDecl(Decl const *D) {
+    assert(D && "Pushing null Decl.");
+    
     if (SEEC_CLANG_DEBUG) {
       for (std::size_t i = 0; i < NodeStack.size(); ++i)
         llvm::outs() << " ";
@@ -167,6 +169,8 @@ public:
   }
 
   void pushStmt(Stmt const *S) {
+    assert(S && "Pushing null Stmt.");
+    
     if (SEEC_CLANG_DEBUG) {
       for (std::size_t i = 0; i < NodeStack.size(); ++i)
         llvm::outs() << " ";
@@ -280,19 +284,24 @@ public:
 class PushStmtForScope {
 private:
   MetadataInserter &MDInserter;
+  
+  bool const Pushed;
 
   PushStmtForScope(PushStmtForScope const &Other);
   PushStmtForScope & operator=(PushStmtForScope const &RHS);
 
 public:
   PushStmtForScope(MetadataInserter &MDInserter, Stmt const *S)
-  : MDInserter(MDInserter)
+  : MDInserter(MDInserter),
+    Pushed(S != nullptr)
   {
-    MDInserter.pushStmt(S);
+    if (Pushed)
+      MDInserter.pushStmt(S);
   }
 
   ~PushStmtForScope() {
-    MDInserter.popStmt();
+    if (Pushed)
+      MDInserter.popStmt();
   }
 };
 
@@ -302,18 +311,23 @@ class PushDeclForScope {
 private:
   MetadataInserter &MDInserter;
 
+  bool const Pushed;
+
   PushDeclForScope(PushDeclForScope const &Other);
   PushDeclForScope & operator=(PushDeclForScope const &RHS);
 
 public:
   PushDeclForScope(MetadataInserter &MDInserter, Decl const *D)
-  : MDInserter(MDInserter)
+  : MDInserter(MDInserter),
+    Pushed(D != nullptr)
   {
-    MDInserter.pushDecl(D);
+    if (Pushed)
+      MDInserter.pushDecl(D);
   }
 
   ~PushDeclForScope() {
-    MDInserter.popDecl();
+    if (Pushed)
+      MDInserter.popDecl();
   }
 };
 
