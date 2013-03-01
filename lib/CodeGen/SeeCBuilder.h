@@ -293,7 +293,7 @@ private:
 public:
   PushStmtForScope(MetadataInserter &MDInserter, Stmt const *S)
   : MDInserter(MDInserter),
-    Pushed(S != nullptr)
+    Pushed(S)
   {
     if (Pushed)
       MDInserter.pushStmt(S);
@@ -319,7 +319,7 @@ private:
 public:
   PushDeclForScope(MetadataInserter &MDInserter, Decl const *D)
   : MDInserter(MDInserter),
-    Pushed(D != nullptr)
+    Pushed(D)
   {
     if (Pushed)
       MDInserter.pushDecl(D);
