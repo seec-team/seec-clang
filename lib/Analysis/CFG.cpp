@@ -155,7 +155,7 @@ public:
       return !(*this == rhs);
     }
 
-    operator bool() const {
+    LLVM_EXPLICIT operator bool() const {
       return *this != const_iterator();
     }
 
@@ -232,6 +232,44 @@ public:
     X ^= 0x1;
   }
 };
+
+class reverse_children {
+  llvm::SmallVector<Stmt *, 12> childrenBuf;
+  ArrayRef<Stmt*> children;
+public:
+  reverse_children(Stmt *S);
+
+  typedef ArrayRef<Stmt*>::reverse_iterator iterator;
+  iterator begin() const { return children.rbegin(); }
+  iterator end() const { return children.rend(); }
+};
+
+
+reverse_children::reverse_children(Stmt *S) {
+  if (CallExpr *CE = dyn_cast<CallExpr>(S)) {
+    children = CE->getRawSubExprs();
+    return;
+  }
+  switch (S->getStmtClass()) {
+    // Note: Fill in this switch with more cases we want to optimize.
+    case Stmt::InitListExprClass: {
+      InitListExpr *IE = cast<InitListExpr>(S);
+      children = llvm::makeArrayRef(reinterpret_cast<Stmt**>(IE->getInits()),
+                                    IE->getNumInits());
+      return;
+    }
+    default:
+      break;
+  }
+
+  // Default case for all other statements.
+  for (Stmt::child_range I = S->children(); I; ++I) {
+    childrenBuf.push_back(*I);
+  }
+
+  // This needs to be done *after* childrenBuf has been populated.
+  children = childrenBuf;
+}
 
 /// CFGBuilder - This class implements CFG construction from an AST.
 ///   The builder is stateful: an instance of the builder should be used to only
@@ -637,7 +675,7 @@ CFG* CFGBuilder::buildCFG(const Decl *D, Stmt *Statement) {
                                    E = BackpatchBlocks.end(); I != E; ++I ) {
 
     CFGBlock *B = I->block;
-    GotoStmt *G = cast<GotoStmt>(B->getTerminator());
+    const GotoStmt *G = cast<GotoStmt>(B->getTerminator());
     LabelMapTy::iterator LI = LabelMap.find(G->getLabel());
 
     // If there is no target for the goto, then we are looking at an
@@ -1047,11 +1085,16 @@ CFGBlock *CFGBuilder::Visit(Stmt * S, AddStmtChoice asc) {
       return VisitExprWithCleanups(cast<ExprWithCleanups>(S), asc);
 
     case Stmt::CXXDefaultArgExprClass:
+    case Stmt::CXXDefaultInitExprClass:
       // FIXME: The expression inside a CXXDefaultArgExpr is owned by the
       // called function's declaration, not by the caller. If we simply add
       // this expression to the CFG, we could end up with the same Expr
       // appearing multiple times.
       // PR13385 / <rdar://problem/12156507>
+      //
+      // It's likewise possible for multiple CXXDefaultInitExprs for the same
+      // expression to be used in the same function (through aggregate
+      // initialization).
       return VisitStmt(S, asc);
 
     case Stmt::CXXBindTemporaryExprClass:
@@ -1166,14 +1209,19 @@ CFGBlock *CFGBuilder::VisitStmt(Stmt *S, AddStmtChoice asc) {
 }
 
 /// VisitChildren - Visit the children of a Stmt.
-CFGBlock *CFGBuilder::VisitChildren(Stmt *Terminator) {
-  CFGBlock *lastBlock = Block;
-  for (Stmt::child_range I = Terminator->children(); I; ++I)
-    if (Stmt *child = *I)
-      if (CFGBlock *b = Visit(child))
-        lastBlock = b;
+CFGBlock *CFGBuilder::VisitChildren(Stmt *S) {
+  CFGBlock *B = Block;
 
-  return lastBlock;
+  // Visit the children in their reverse order so that they appear in
+  // left-to-right (natural) order in the CFG.
+  reverse_children RChildren(S);
+  for (reverse_children::iterator I = RChildren.begin(), E = RChildren.end();
+       I != E; ++I) {
+    if (Stmt *Child = *I)
+      if (CFGBlock *R = Visit(Child))
+        B = R;
+  }
+  return B;
 }
 
 CFGBlock *CFGBuilder::VisitAddrLabelExpr(AddrLabelExpr *A,
@@ -1610,6 +1658,21 @@ CFGBlock *CFGBuilder::VisitDeclSubExpr(DeclStmt *DS) {
   bool IsReference = false;
   bool HasTemporaries = false;
 
+  // Guard static initializers under a branch.
+  CFGBlock *blockAfterStaticInit = 0;
+
+  if (BuildOpts.AddStaticInitBranches && VD->isStaticLocal()) {
+    // For static variables, we need to create a branch to track
+    // whether or not they are initialized.
+    if (Block) {
+      Succ = Block;
+      Block = 0;
+      if (badCFG)
+        return 0;
+    }
+    blockAfterStaticInit = Succ;
+  }
+
   // Destructors of temporaries in initialization expression should be called
   // after initialization finishes.
   Expr *Init = VD->getInit();
@@ -1657,7 +1720,17 @@ CFGBlock *CFGBuilder::VisitDeclSubExpr(DeclStmt *DS) {
   if (ScopePos && VD == *ScopePos)
     ++ScopePos;
 
-  return Block ? Block : LastBlock;
+  CFGBlock *B = LastBlock;
+  if (blockAfterStaticInit) {
+    Succ = B;
+    Block = createBlock(false);
+    Block->setTerminator(DS);
+    addSuccessor(Block, blockAfterStaticInit);
+    addSuccessor(Block, B);
+    B = Block;
+  }
+
+  return B;
 }
 
 CFGBlock *CFGBuilder::VisitIfStmt(IfStmt *I) {
@@ -3093,19 +3166,14 @@ tryAgain:
 
 CFGBlock *CFGBuilder::VisitChildrenForTemporaryDtors(Stmt *E) {
   // When visiting children for destructors we want to visit them in reverse
-  // order. Because there's no reverse iterator for children must to reverse
-  // them in helper vector.
-  typedef SmallVector<Stmt *, 4> ChildrenVect;
-  ChildrenVect ChildrenRev;
-  for (Stmt::child_range I = E->children(); I; ++I) {
-    if (*I) ChildrenRev.push_back(*I);
-  }
-
+  // order that they will appear in the CFG.  Because the CFG is built
+  // bottom-up, this means we visit them in their natural order, which
+  // reverses them in the CFG.
   CFGBlock *B = Block;
-  for (ChildrenVect::reverse_iterator I = ChildrenRev.rbegin(),
-      L = ChildrenRev.rend(); I != L; ++I) {
-    if (CFGBlock *R = VisitForTemporaryDtors(*I))
-      B = R;
+  for (Stmt::child_range I = E->children(); I; ++I) {
+    if (Stmt *Child = *I)
+      if (CFGBlock *R = VisitForTemporaryDtors(Child))
+        B = R;
   }
   return B;
 }
@@ -3294,13 +3362,12 @@ CFG* CFG::buildCFG(const Decl *D, Stmt *Statement, ASTContext *C,
 const CXXDestructorDecl *
 CFGImplicitDtor::getDestructorDecl(ASTContext &astContext) const {
   switch (getKind()) {
-    case CFGElement::Invalid:
     case CFGElement::Statement:
     case CFGElement::Initializer:
       llvm_unreachable("getDestructorDecl should only be used with "
                        "ImplicitDtors");
     case CFGElement::AutomaticObjectDtor: {
-      const VarDecl *var = cast<CFGAutomaticObjDtor>(this)->getVarDecl();
+      const VarDecl *var = castAs<CFGAutomaticObjDtor>().getVarDecl();
       QualType ty = var->getType();
       ty = ty.getNonReferenceType();
       while (const ArrayType *arrayType = astContext.getAsArrayType(ty)) {
@@ -3313,7 +3380,7 @@ CFGImplicitDtor::getDestructorDecl(ASTContext &astContext) const {
     }
     case CFGElement::TemporaryDtor: {
       const CXXBindTemporaryExpr *bindExpr =
-        cast<CFGTemporaryDtor>(this)->getBindTemporaryExpr();
+        castAs<CFGTemporaryDtor>().getBindTemporaryExpr();
       const CXXTemporary *temp = bindExpr->getTemporary();
       return temp->getDestructor();
     }
@@ -3330,113 +3397,6 @@ bool CFGImplicitDtor::isNoReturn(ASTContext &astContext) const {
   if (const CXXDestructorDecl *DD = getDestructorDecl(astContext))
     return DD->isNoReturn();
   return false;
-}
-
-//===----------------------------------------------------------------------===//
-// CFG: Queries for BlkExprs.
-//===----------------------------------------------------------------------===//
-
-namespace {
-  typedef llvm::DenseMap<const Stmt*,unsigned> BlkExprMapTy;
-}
-
-static void FindSubExprAssignments(const Stmt *S,
-                                   llvm::SmallPtrSet<const Expr*,50>& Set) {
-  if (!S)
-    return;
-
-  for (Stmt::const_child_range I = S->children(); I; ++I) {
-    const Stmt *child = *I;
-    if (!child)
-      continue;
-
-    if (const BinaryOperator* B = dyn_cast<BinaryOperator>(child))
-      if (B->isAssignmentOp()) Set.insert(B);
-
-    FindSubExprAssignments(child, Set);
-  }
-}
-
-static BlkExprMapTy* PopulateBlkExprMap(CFG& cfg) {
-  BlkExprMapTy* M = new BlkExprMapTy();
-
-  // Look for assignments that are used as subexpressions.  These are the only
-  // assignments that we want to *possibly* register as a block-level
-  // expression.  Basically, if an assignment occurs both in a subexpression and
-  // at the block-level, it is a block-level expression.
-  llvm::SmallPtrSet<const Expr*,50> SubExprAssignments;
-
-  for (CFG::iterator I=cfg.begin(), E=cfg.end(); I != E; ++I)
-    for (CFGBlock::iterator BI=(*I)->begin(), EI=(*I)->end(); BI != EI; ++BI)
-      if (const CFGStmt *S = BI->getAs<CFGStmt>())
-        FindSubExprAssignments(S->getStmt(), SubExprAssignments);
-
-  for (CFG::iterator I=cfg.begin(), E=cfg.end(); I != E; ++I) {
-
-    // Iterate over the statements again on identify the Expr* and Stmt* at the
-    // block-level that are block-level expressions.
-
-    for (CFGBlock::iterator BI=(*I)->begin(), EI=(*I)->end(); BI != EI; ++BI) {
-      const CFGStmt *CS = BI->getAs<CFGStmt>();
-      if (!CS)
-        continue;
-      if (const Expr *Exp = dyn_cast<Expr>(CS->getStmt())) {
-        assert((Exp->IgnoreParens() == Exp) && "No parens on block-level exps");
-
-        if (const BinaryOperator* B = dyn_cast<BinaryOperator>(Exp)) {
-          // Assignment expressions that are not nested within another
-          // expression are really "statements" whose value is never used by
-          // another expression.
-          if (B->isAssignmentOp() && !SubExprAssignments.count(Exp))
-            continue;
-        } else if (const StmtExpr *SE = dyn_cast<StmtExpr>(Exp)) {
-          // Special handling for statement expressions.  The last statement in
-          // the statement expression is also a block-level expr.
-          const CompoundStmt *C = SE->getSubStmt();
-          if (!C->body_empty()) {
-            const Stmt *Last = C->body_back();
-            if (const Expr *LastEx = dyn_cast<Expr>(Last))
-              Last = LastEx->IgnoreParens();
-            unsigned x = M->size();
-            (*M)[Last] = x;
-          }
-        }
-
-        unsigned x = M->size();
-        (*M)[Exp] = x;
-      }
-    }
-
-    // Look at terminators.  The condition is a block-level expression.
-
-    Stmt *S = (*I)->getTerminatorCondition();
-
-    if (S && M->find(S) == M->end()) {
-      unsigned x = M->size();
-      (*M)[S] = x;
-    }
-  }
-
-  return M;
-}
-
-CFG::BlkExprNumTy CFG::getBlkExprNum(const Stmt *S) {
-  assert(S != NULL);
-  if (!BlkExprMap) { BlkExprMap = (void*) PopulateBlkExprMap(*this); }
-
-  BlkExprMapTy* M = reinterpret_cast<BlkExprMapTy*>(BlkExprMap);
-  BlkExprMapTy::iterator I = M->find(S);
-  return (I == M->end()) ? CFG::BlkExprNumTy() : CFG::BlkExprNumTy(I->second);
-}
-
-unsigned CFG::getNumBlkExprs() {
-  if (const BlkExprMapTy* M = reinterpret_cast<const BlkExprMapTy*>(BlkExprMap))
-    return M->size();
-
-  // We assume callers interested in the number of BlkExprs will want
-  // the map constructed if it doesn't already exist.
-  BlkExprMap = (void*) PopulateBlkExprMap(*this);
-  return reinterpret_cast<BlkExprMapTy*>(BlkExprMap)->size();
 }
 
 //===----------------------------------------------------------------------===//
@@ -3463,14 +3423,6 @@ bool CFGBlock::FilterEdge(const CFGBlock::FilterOptions &F,
 }
 
 //===----------------------------------------------------------------------===//
-// Cleanup: CFG dstor.
-//===----------------------------------------------------------------------===//
-
-CFG::~CFG() {
-  delete reinterpret_cast<const BlkExprMapTy*>(BlkExprMap);
-}
-
-//===----------------------------------------------------------------------===//
 // CFG pretty printing
 //===----------------------------------------------------------------------===//
 
@@ -3493,7 +3445,7 @@ public:
       unsigned j = 1;
       for (CFGBlock::const_iterator BI = (*I)->begin(), BEnd = (*I)->end() ;
            BI != BEnd; ++BI, ++j ) {        
-        if (const CFGStmt *SE = BI->getAs<CFGStmt>()) {
+        if (Optional<CFGStmt> SE = BI->getAs<CFGStmt>()) {
           const Stmt *stmt= SE->getStmt();
           std::pair<unsigned, unsigned> P((*I)->getBlockID(), j);
           StmtMap[stmt] = P;
@@ -3605,6 +3557,11 @@ public:
     Terminator->printPretty(OS, Helper, Policy);
   }
 
+  void VisitDeclStmt(DeclStmt *DS) {
+    VarDecl *VD = cast<VarDecl>(DS->getSingleDecl());
+    OS << "static init " << VD->getName();
+  }
+
   void VisitForStmt(ForStmt *F) {
     OS << "for (" ;
     if (F->getInit())
@@ -3683,7 +3640,7 @@ public:
 
 static void print_elem(raw_ostream &OS, StmtPrinterHelper* Helper,
                        const CFGElement &E) {
-  if (const CFGStmt *CS = E.getAs<CFGStmt>()) {
+  if (Optional<CFGStmt> CS = E.getAs<CFGStmt>()) {
     const Stmt *S = CS->getStmt();
     
     if (Helper) {
@@ -3731,7 +3688,7 @@ static void print_elem(raw_ostream &OS, StmtPrinterHelper* Helper,
     if (isa<Expr>(S))
       OS << '\n';
 
-  } else if (const CFGInitializer *IE = E.getAs<CFGInitializer>()) {
+  } else if (Optional<CFGInitializer> IE = E.getAs<CFGInitializer>()) {
     const CXXCtorInitializer *I = IE->getInitializer();
     if (I->isBaseInitializer())
       OS << I->getBaseClass()->getAsCXXRecordDecl()->getName();
@@ -3746,7 +3703,8 @@ static void print_elem(raw_ostream &OS, StmtPrinterHelper* Helper,
       OS << " (Base initializer)\n";
     else OS << " (Member initializer)\n";
 
-  } else if (const CFGAutomaticObjDtor *DE = E.getAs<CFGAutomaticObjDtor>()){
+  } else if (Optional<CFGAutomaticObjDtor> DE =
+                 E.getAs<CFGAutomaticObjDtor>()) {
     const VarDecl *VD = DE->getVarDecl();
     Helper->handleDecl(VD, OS);
 
@@ -3758,19 +3716,19 @@ static void print_elem(raw_ostream &OS, StmtPrinterHelper* Helper,
     OS << ".~" << T->getAsCXXRecordDecl()->getName().str() << "()";
     OS << " (Implicit destructor)\n";
 
-  } else if (const CFGBaseDtor *BE = E.getAs<CFGBaseDtor>()) {
+  } else if (Optional<CFGBaseDtor> BE = E.getAs<CFGBaseDtor>()) {
     const CXXBaseSpecifier *BS = BE->getBaseSpecifier();
     OS << "~" << BS->getType()->getAsCXXRecordDecl()->getName() << "()";
     OS << " (Base object destructor)\n";
 
-  } else if (const CFGMemberDtor *ME = E.getAs<CFGMemberDtor>()) {
+  } else if (Optional<CFGMemberDtor> ME = E.getAs<CFGMemberDtor>()) {
     const FieldDecl *FD = ME->getFieldDecl();
     const Type *T = FD->getType()->getBaseElementTypeUnsafe();
     OS << "this->" << FD->getName();
     OS << ".~" << T->getAsCXXRecordDecl()->getName() << "()";
     OS << " (Member object destructor)\n";
 
-  } else if (const CFGTemporaryDtor *TE = E.getAs<CFGTemporaryDtor>()) {
+  } else if (Optional<CFGTemporaryDtor> TE = E.getAs<CFGTemporaryDtor>()) {
     const CXXBindTemporaryExpr *BT = TE->getBindTemporaryExpr();
     OS << "~" << BT->getType()->getAsCXXRecordDecl()->getName() << "()";
     OS << " (Temporary object destructor)\n";

@@ -16,6 +16,7 @@
 #ifndef LLVM_CLANG_AST_COMMENT_COMMAND_TRAITS_H
 #define LLVM_CLANG_AST_COMMENT_COMMAND_TRAITS_H
 
+#include "clang/Basic/CommentOptions.h"
 #include "clang/Basic/LLVM.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -99,7 +100,17 @@ struct CommandInfo {
   ///   \fn void f(int a);
   /// \endcode
   unsigned IsDeclarationCommand : 1;
+  
+  /// \brief True if verbatim-like line command is a function declaration.
+  unsigned IsFunctionDeclarationCommand : 1;
 
+  /// \brief True if block command is further describing a container API; such
+  /// as \@coclass, \@classdesign, etc.
+  unsigned IsRecordLikeDetailCommand : 1;
+  
+  /// \brief True if block command is a container API; such as \@interface.
+  unsigned IsRecordLikeDeclarationCommand : 1;
+  
   /// \brief True if this command is unknown.  This \c CommandInfo object was
   /// created during parsing.
   unsigned IsUnknownCommand : 1;
@@ -116,7 +127,10 @@ public:
     KCI_Last
   };
 
-  CommandTraits(llvm::BumpPtrAllocator &Allocator);
+  CommandTraits(llvm::BumpPtrAllocator &Allocator,
+                const CommentOptions &CommentOptions);
+
+  void registerCommentOptions(const CommentOptions &CommentOptions);
 
   /// \returns a CommandInfo object for a given command name or
   /// NULL if no CommandInfo object exists for this command.
@@ -128,9 +142,13 @@ public:
     llvm_unreachable("the command should be known");
   }
 
+  const CommandInfo *getTypoCorrectCommandInfo(StringRef Typo) const;
+  
   const CommandInfo *getCommandInfo(unsigned CommandID) const;
 
   const CommandInfo *registerUnknownCommand(StringRef CommandName);
+
+  const CommandInfo *registerBlockCommand(StringRef CommandName);
 
   /// \returns a CommandInfo object for a given command name or
   /// NULL if \c Name is not a builtin command.
@@ -146,6 +164,8 @@ private:
 
   const CommandInfo *getRegisteredCommandInfo(StringRef Name) const;
   const CommandInfo *getRegisteredCommandInfo(unsigned CommandID) const;
+
+  CommandInfo *createCommandInfoWithName(StringRef CommandName);
 
   unsigned NextID;
 

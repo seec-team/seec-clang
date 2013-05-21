@@ -118,15 +118,17 @@ public:
   /// The default implementation of this method is a no-op.
   virtual CXXBaseSpecifier *GetExternalCXXBaseSpecifiers(uint64_t Offset);
 
-  /// \brief Finds all declarations with the given name in the
-  /// given context.
+  /// \brief Update an out-of-date identifier.
+  virtual void updateOutOfDateIdentifier(IdentifierInfo &II) { }
+
+  /// \brief Find all declarations with the given name in the given context,
+  /// and add them to the context by calling SetExternalVisibleDeclsForName
+  /// or SetNoExternalVisibleDeclsForName.
+  /// \return \c true if any declarations might have been found, \c false if
+  /// we definitely have no declarations with tbis name.
   ///
-  /// Generally the final step of this method is either to call
-  /// SetExternalVisibleDeclsForName or to recursively call lookup on
-  /// the DeclContext after calling SetExternalVisibleDecls.
-  ///
-  /// The default implementation of this method is a no-op.
-  virtual DeclContextLookupResult
+  /// The default implementation of this method is a no-op returning \c false.
+  virtual bool
   FindExternalVisibleDeclsByName(const DeclContext *DC, DeclarationName Name);
 
   /// \brief Ensures that the table of all visible declarations inside this
@@ -327,7 +329,12 @@ public:
   /// \brief Whether this pointer is non-NULL.
   ///
   /// This operation does not require the AST node to be deserialized.
-  operator bool() const { return Ptr != 0; }
+  LLVM_EXPLICIT operator bool() const { return Ptr != 0; }
+
+  /// \brief Whether this pointer is non-NULL.
+  ///
+  /// This operation does not require the AST node to be deserialized.
+  bool isValid() const { return Ptr != 0; }
 
   /// \brief Whether this pointer is currently stored as an offset.
   bool isOffset() const { return Ptr & 0x01; }

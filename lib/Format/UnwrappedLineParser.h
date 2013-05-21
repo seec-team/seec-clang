@@ -23,9 +23,6 @@
 #include <list>
 
 namespace clang {
-
-class DiagnosticsEngine;
-
 namespace format {
 
 /// \brief A wrapper around a \c Token storing information about the
@@ -33,8 +30,8 @@ namespace format {
 struct FormatToken {
   FormatToken()
       : NewlinesBefore(0), HasUnescapedNewline(false), WhiteSpaceLength(0),
-        TokenLength(0), IsFirst(false), MustBreakBefore(false) {
-  }
+        LastNewlineOffset(0), TokenLength(0), IsFirst(false),
+        MustBreakBefore(false), TrailingWhiteSpaceLength(0) {}
 
   /// \brief The \c Token.
   Token Tok;
@@ -59,6 +56,10 @@ struct FormatToken {
   /// the \c Token.
   unsigned WhiteSpaceLength;
 
+  /// \brief The offset just past the last '\n' in this token's leading
+  /// whitespace (relative to \c WhiteSpaceStart). 0 if there is no '\n'.
+  unsigned LastNewlineOffset;
+
   /// \brief The length of the non-whitespace parts of the token. This is
   /// necessary because we need to handle escaped newlines that are stored
   /// with the token.
@@ -72,6 +73,18 @@ struct FormatToken {
   /// This happens for example when a preprocessor directive ended directly
   /// before the token.
   bool MustBreakBefore;
+
+  /// \brief Number of characters of trailing whitespace.
+  unsigned TrailingWhiteSpaceLength;
+
+  /// \brief Returns actual token start location without leading escaped
+  /// newlines and whitespace.
+  ///
+  /// This can be different to Tok.getLocation(), which includes leading escaped
+  /// newlines.
+  SourceLocation getStartOfNonWhitespace() const {
+    return WhiteSpaceStart.getLocWithOffset(WhiteSpaceLength);
+  }
 };
 
 /// \brief An unwrapped line is a sequence of \c Token, that we would like to
@@ -113,17 +126,16 @@ public:
 
 class UnwrappedLineParser {
 public:
-  UnwrappedLineParser(clang::DiagnosticsEngine &Diag, const FormatStyle &Style,
-                      FormatTokenSource &Tokens,
+  UnwrappedLineParser(const FormatStyle &Style, FormatTokenSource &Tokens,
                       UnwrappedLineConsumer &Callback);
 
   /// Returns true in case of a structural error.
   bool parse();
 
 private:
-  bool parseFile();
-  bool parseLevel(bool HasOpeningBrace);
-  bool parseBlock(bool MustBeDeclaration, unsigned AddLevels = 1);
+  void parseFile();
+  void parseLevel(bool HasOpeningBrace);
+  void parseBlock(bool MustBeDeclaration, unsigned AddLevels = 1);
   void parsePPDirective();
   void parsePPDefine();
   void parsePPUnknown();
@@ -183,7 +195,10 @@ private:
   // whether we are in a compound statement or not.
   std::vector<bool> DeclarationScopeStack;
 
-  clang::DiagnosticsEngine &Diag;
+  // Will be true if we encounter an error that leads to possibily incorrect
+  // indentation levels.
+  bool StructuralError;
+
   const FormatStyle &Style;
   FormatTokenSource *Tokens;
   UnwrappedLineConsumer &Callback;

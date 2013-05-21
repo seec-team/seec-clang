@@ -15,6 +15,7 @@
 #ifndef LLVM_CLANG_AST_ASTCONTEXT_H
 #define LLVM_CLANG_AST_ASTCONTEXT_H
 
+#include "clang/AST/ASTTypeTraits.h"
 #include "clang/AST/CanonicalType.h"
 #include "clang/AST/CommentCommandTraits.h"
 #include "clang/AST/Decl.h"
@@ -22,6 +23,7 @@
 #include "clang/AST/NestedNameSpecifier.h"
 #include "clang/AST/PrettyPrinter.h"
 #include "clang/AST/RawCommentList.h"
+#include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/TemplateName.h"
 #include "clang/AST/Type.h"
 #include "clang/Basic/AddressSpaces.h"
@@ -57,28 +59,12 @@ namespace clang {
   class TargetInfo;
   class CXXABI;
   // Decls
-  class DeclContext;
-  class CXXConversionDecl;
-  class CXXMethodDecl;
-  class CXXRecordDecl;
-  class Decl;
-  class FieldDecl;
   class MangleContext;
   class ObjCIvarDecl;
-  class ObjCIvarRefExpr;
   class ObjCPropertyDecl;
-  class ParmVarDecl;
-  class RecordDecl;
-  class StoredDeclsMap;
-  class TagDecl;
-  class TemplateTemplateParmDecl;
-  class TemplateTypeParmDecl;
-  class TranslationUnitDecl;
-  class TypeDecl;
-  class TypedefNameDecl;
+  class UnresolvedSetIterator;
   class UsingDecl;
   class UsingShadowDecl;
-  class UnresolvedSetIterator;
 
   namespace Builtin { class Context; }
 
@@ -91,7 +77,7 @@ namespace clang {
 class ASTContext : public RefCountedBase<ASTContext> {
   ASTContext &this_() { return *this; }
 
-  mutable std::vector<Type*> Types;
+  mutable SmallVector<Type *, 0> Types;
   mutable llvm::FoldingSet<ExtQuals> ExtQualNodes;
   mutable llvm::FoldingSet<ComplexType> ComplexTypes;
   mutable llvm::FoldingSet<PointerType> PointerTypes;
@@ -398,6 +384,58 @@ public:
   OwningPtr<ExternalASTSource> ExternalSource;
   ASTMutationListener *Listener;
 
+  /// \brief Contains parents of a node.
+  typedef llvm::SmallVector<ast_type_traits::DynTypedNode, 1> ParentVector;
+
+  /// \brief Maps from a node to its parents.
+  typedef llvm::DenseMap<const void *, ParentVector> ParentMap;
+
+  /// \brief Returns the parents of the given node.
+  ///
+  /// Note that this will lazily compute the parents of all nodes
+  /// and store them for later retrieval. Thus, the first call is O(n)
+  /// in the number of AST nodes.
+  ///
+  /// Caveats and FIXMEs:
+  /// Calculating the parent map over all AST nodes will need to load the
+  /// full AST. This can be undesirable in the case where the full AST is
+  /// expensive to create (for example, when using precompiled header
+  /// preambles). Thus, there are good opportunities for optimization here.
+  /// One idea is to walk the given node downwards, looking for references
+  /// to declaration contexts - once a declaration context is found, compute
+  /// the parent map for the declaration context; if that can satisfy the
+  /// request, loading the whole AST can be avoided. Note that this is made
+  /// more complex by statements in templates having multiple parents - those
+  /// problems can be solved by building closure over the templated parts of
+  /// the AST, which also avoids touching large parts of the AST.
+  /// Additionally, we will want to add an interface to already give a hint
+  /// where to search for the parents, for example when looking at a statement
+  /// inside a certain function.
+  ///
+  /// 'NodeT' can be one of Decl, Stmt, Type, TypeLoc,
+  /// NestedNameSpecifier or NestedNameSpecifierLoc.
+  template <typename NodeT>
+  ParentVector getParents(const NodeT &Node) {
+    return getParents(ast_type_traits::DynTypedNode::create(Node));
+  }
+
+  ParentVector getParents(const ast_type_traits::DynTypedNode &Node) {
+    assert(Node.getMemoizationData() &&
+           "Invariant broken: only nodes that support memoization may be "
+           "used in the parent map.");
+    if (!AllParents) {
+      // We always need to run over the whole translation unit, as
+      // hasAncestor can escape any subtree.
+      AllParents.reset(
+          ParentMapASTVisitor::buildMap(*getTranslationUnitDecl()));
+    }
+    ParentMap::const_iterator I = AllParents->find(Node.getMemoizationData());
+    if (I == AllParents->end()) {
+      return ParentVector();
+    }
+    return I->second;
+  }
+
   const clang::PrintingPolicy &getPrintingPolicy() const {
     return PrintingPolicy;
   }
@@ -702,7 +740,8 @@ public:
   CanQualType VoidTy;
   CanQualType BoolTy;
   CanQualType CharTy;
-  CanQualType WCharTy;  // [C++ 3.9.1p5], integer type in C99.
+  CanQualType WCharTy;  // [C++ 3.9.1p5].
+  CanQualType WideCharTy; // Same as WCharTy in C++, integer type in C99.
   CanQualType WIntTy;   // [C99 7.24.1], integer type unchanged by default promotions.
   CanQualType Char16Ty; // [C++0x 3.9.1p5], integer type in C99.
   CanQualType Char32Ty; // [C++0x 3.9.1p5], integer type in C99.
@@ -721,7 +760,7 @@ public:
   CanQualType OCLImage1dTy, OCLImage1dArrayTy, OCLImage1dBufferTy;
   CanQualType OCLImage2dTy, OCLImage2dArrayTy;
   CanQualType OCLImage3dTy;
-  CanQualType OCLEventTy;
+  CanQualType OCLSamplerTy, OCLEventTy;
 
   // Types for deductions in C++0x [stmt.ranged]'s desugaring. Built on demand.
   mutable QualType AutoDeductTy;     // Deduction against 'auto'.
@@ -764,7 +803,7 @@ public:
   ASTMutationListener *getASTMutationListener() const { return Listener; }
 
   void PrintStats() const;
-  const std::vector<Type*>& getTypes() const { return Types; }
+  const SmallVectorImpl<Type *>& getTypes() const { return Types; }
 
   /// \brief Retrieve the declaration for the 128-bit signed integer type.
   TypedefDecl *getInt128Decl() const;
@@ -828,6 +867,9 @@ public:
   /// \brief Change the ExtInfo on a function type.
   const FunctionType *adjustFunctionType(const FunctionType *Fn,
                                          FunctionType::ExtInfo EInfo);
+
+  /// \brief Change the result type of a function type once it is deduced.
+  void adjustDeducedFunctionResultType(FunctionDecl *FD, QualType ResultType);
 
   /// \brief Return the uniqued reference to the type for a complex
   /// number with the specified element type.
@@ -955,8 +997,7 @@ public:
   }
 
   /// \brief Return a normal function type with a typed argument list.
-  QualType getFunctionType(QualType ResultTy,
-                           const QualType *Args, unsigned NumArgs,
+  QualType getFunctionType(QualType ResultTy, ArrayRef<QualType> Args,
                            const FunctionProtoType::ExtProtoInfo &EPI) const;
 
   /// \brief Return the unique reference to the type for the specified type
@@ -1039,7 +1080,7 @@ public:
                                             const TemplateArgument *Args) const;
 
   QualType getPackExpansionType(QualType Pattern,
-                                llvm::Optional<unsigned> NumExpansions);
+                                Optional<unsigned> NumExpansions);
 
   QualType getObjCInterfaceType(const ObjCInterfaceDecl *Decl,
                                 ObjCInterfaceDecl *PrevDecl = 0) const;
@@ -1063,7 +1104,8 @@ public:
                                  UnaryTransformType::UTTKind UKind) const;
 
   /// \brief C++11 deduced auto type.
-  QualType getAutoType(QualType DeducedType) const;
+  QualType getAutoType(QualType DeducedType, bool IsDecltypeAuto,
+                       bool IsDependent = false) const;
 
   /// \brief C++11 deduction pattern for 'auto' type.
   QualType getAutoDeductType() const;
@@ -1089,10 +1131,14 @@ public:
   /// <stdint.h>.
   CanQualType getUIntMaxType() const;
 
-  /// \brief In C++, this returns the unique wchar_t type.  In C99, this
-  /// returns a type compatible with the type defined in <stddef.h> as defined
-  /// by the target.
+  /// \brief Return the unique wchar_t type available in C++ (and available as
+  /// __wchar_t as a Microsoft extension).
   QualType getWCharType() const { return WCharTy; }
+
+  /// \brief Return the type of wide characters. In C++, this returns the
+  /// unique wchar_t type. In C99, this returns a type compatible with the type
+  /// defined in <stddef.h> as defined by the target.
+  QualType getWideCharType() const { return WideCharTy; }
 
   /// \brief Return the type of "signed wchar_t".
   ///
@@ -1414,7 +1460,18 @@ public:
     qs.addObjCLifetime(lifetime);
     return getQualifiedType(type, qs);
   }
-
+  
+  /// getUnqualifiedObjCPointerType - Returns version of
+  /// Objective-C pointer type with lifetime qualifier removed.
+  QualType getUnqualifiedObjCPointerType(QualType type) const {
+    if (!type.getTypePtr()->isObjCObjectPointerType() ||
+        !type.getQualifiers().hasObjCLifetime())
+      return type;
+    Qualifiers Qs = type.getQualifiers();
+    Qs.removeObjCLifetime();
+    return getQualifiedType(type.getUnqualifiedType(), Qs);
+  }
+  
   DeclarationNameInfo getNameForTemplate(TemplateName Name,
                                          SourceLocation NameLoc) const;
 
@@ -1540,6 +1597,14 @@ public:
   /// This can be different than the ABI alignment in cases where it is
   /// beneficial for performance to overalign a data type.
   unsigned getPreferredTypeAlign(const Type *T) const;
+
+  /// \brief Return the alignment in bits that should be given to a
+  /// global variable with type \p T.
+  unsigned getAlignOfGlobalVar(QualType T) const;
+
+  /// \brief Return the alignment in characters that should be given to a
+  /// global variable with type \p T.
+  CharUnits getAlignOfGlobalVarInChars(QualType T) const;
 
   /// \brief Return a conservative estimate of the alignment of the specified
   /// decl \p D.
@@ -1924,8 +1989,8 @@ public:
   //                    Type Iterators.
   //===--------------------------------------------------------------------===//
 
-  typedef std::vector<Type*>::iterator       type_iterator;
-  typedef std::vector<Type*>::const_iterator const_type_iterator;
+  typedef SmallVectorImpl<Type *>::iterator       type_iterator;
+  typedef SmallVectorImpl<Type *>::const_iterator const_type_iterator;
 
   type_iterator types_begin() { return Types.begin(); }
   type_iterator types_end() { return Types.end(); }
@@ -2119,7 +2184,8 @@ private:
                                   bool EncodingProperty = false,
                                   bool StructField = false,
                                   bool EncodeBlockParameters = false,
-                                  bool EncodeClassNames = false) const;
+                                  bool EncodeClassNames = false,
+                                  bool EncodePointerToObjCTypedef = false) const;
 
   // Adds the encoding of the structure's members.
   void getObjCEncodingForStructureImpl(RecordDecl *RD, std::string &S,
@@ -2151,8 +2217,81 @@ private:
   friend class DeclContext;
   friend class DeclarationNameTable;
   void ReleaseDeclContextMaps();
+
+  /// \brief A \c RecursiveASTVisitor that builds a map from nodes to their
+  /// parents as defined by the \c RecursiveASTVisitor.
+  ///
+  /// Note that the relationship described here is purely in terms of AST
+  /// traversal - there are other relationships (for example declaration context)
+  /// in the AST that are better modeled by special matchers.
+  ///
+  /// FIXME: Currently only builds up the map using \c Stmt and \c Decl nodes.
+  class ParentMapASTVisitor : public RecursiveASTVisitor<ParentMapASTVisitor> {
+  public:
+    /// \brief Builds and returns the translation unit's parent map.
+    ///
+    ///  The caller takes ownership of the returned \c ParentMap.
+    static ParentMap *buildMap(TranslationUnitDecl &TU) {
+      ParentMapASTVisitor Visitor(new ParentMap);
+      Visitor.TraverseDecl(&TU);
+      return Visitor.Parents;
+    }
+
+  private:
+    typedef RecursiveASTVisitor<ParentMapASTVisitor> VisitorBase;
+
+    ParentMapASTVisitor(ParentMap *Parents) : Parents(Parents) {
+    }
+
+    bool shouldVisitTemplateInstantiations() const {
+      return true;
+    }
+    bool shouldVisitImplicitCode() const {
+      return true;
+    }
+    // Disables data recursion. We intercept Traverse* methods in the RAV, which
+    // are not triggered during data recursion.
+    bool shouldUseDataRecursionFor(clang::Stmt *S) const {
+      return false;
+    }
+
+    template <typename T>
+    bool TraverseNode(T *Node, bool(VisitorBase:: *traverse) (T *)) {
+      if (Node == NULL)
+        return true;
+      if (ParentStack.size() > 0)
+        // FIXME: Currently we add the same parent multiple times, for example
+        // when we visit all subexpressions of template instantiations; this is
+        // suboptimal, bug benign: the only way to visit those is with
+        // hasAncestor / hasParent, and those do not create new matches.
+        // The plan is to enable DynTypedNode to be storable in a map or hash
+        // map. The main problem there is to implement hash functions /
+        // comparison operators for all types that DynTypedNode supports that
+        // do not have pointer identity.
+        (*Parents)[Node].push_back(ParentStack.back());
+      ParentStack.push_back(ast_type_traits::DynTypedNode::create(*Node));
+      bool Result = (this ->* traverse) (Node);
+      ParentStack.pop_back();
+      return Result;
+    }
+
+    bool TraverseDecl(Decl *DeclNode) {
+      return TraverseNode(DeclNode, &VisitorBase::TraverseDecl);
+    }
+
+    bool TraverseStmt(Stmt *StmtNode) {
+      return TraverseNode(StmtNode, &VisitorBase::TraverseStmt);
+    }
+
+    ParentMap *Parents;
+    llvm::SmallVector<ast_type_traits::DynTypedNode, 16> ParentStack;
+
+    friend class RecursiveASTVisitor<ParentMapASTVisitor>;
+  };
+
+  llvm::OwningPtr<ParentMap> AllParents;
 };
-  
+
 /// \brief Utility function for constructing a nullary selector.
 static inline Selector GetNullarySelector(StringRef name, ASTContext& Ctx) {
   IdentifierInfo* II = &Ctx.Idents.get(name);

@@ -165,16 +165,16 @@ SourceLocation IndexingContext::CXXBasesListInfo::getBaseLoc(
   if (TL.isNull())
     return Loc;
 
-  if (const QualifiedTypeLoc *QL = dyn_cast<QualifiedTypeLoc>(&TL))
-    TL = QL->getUnqualifiedLoc();
+  if (QualifiedTypeLoc QL = TL.getAs<QualifiedTypeLoc>())
+    TL = QL.getUnqualifiedLoc();
 
-  if (const ElaboratedTypeLoc *EL = dyn_cast<ElaboratedTypeLoc>(&TL))
-    return EL->getNamedTypeLoc().getBeginLoc();
-  if (const DependentNameTypeLoc *DL = dyn_cast<DependentNameTypeLoc>(&TL))
-    return DL->getNameLoc();
-  if (const DependentTemplateSpecializationTypeLoc *
-        DTL = dyn_cast<DependentTemplateSpecializationTypeLoc>(&TL))
-    return DTL->getTemplateNameLoc();
+  if (ElaboratedTypeLoc EL = TL.getAs<ElaboratedTypeLoc>())
+    return EL.getNamedTypeLoc().getBeginLoc();
+  if (DependentNameTypeLoc DL = TL.getAs<DependentNameTypeLoc>())
+    return DL.getNameLoc();
+  if (DependentTemplateSpecializationTypeLoc DTL =
+          TL.getAs<DependentTemplateSpecializationTypeLoc>())
+    return DTL.getTemplateNameLoc();
 
   return Loc;
 }
@@ -210,11 +210,12 @@ bool IndexingContext::isFunctionLocalDecl(const Decl *D) {
     return false;
 
   if (const NamedDecl *ND = dyn_cast<NamedDecl>(D)) {
-    switch (ND->getLinkage()) {
+    switch (ND->getFormalLinkage()) {
     case NoLinkage:
     case InternalLinkage:
       return true;
     case UniqueExternalLinkage:
+      llvm_unreachable("Not a sema linkage");
     case ExternalLinkage:
       return false;
     }
@@ -391,6 +392,12 @@ bool IndexingContext::handleVar(const VarDecl *D) {
 }
 
 bool IndexingContext::handleField(const FieldDecl *D) {
+  DeclInfo DInfo(/*isRedeclaration=*/false, /*isDefinition=*/true,
+                 /*isContainer=*/false);
+  return handleDecl(D, D->getLocation(), getCursor(D), DInfo);
+}
+
+bool IndexingContext::handleMSProperty(const MSPropertyDecl *D) {
   DeclInfo DInfo(/*isRedeclaration=*/false, /*isDefinition=*/true,
                  /*isContainer=*/false);
   return handleDecl(D, D->getLocation(), getCursor(D), DInfo);

@@ -20,6 +20,7 @@
 #include "clang/AST/DeclContextInternals.h"
 #include "clang/AST/DeclFriend.h"
 #include "clang/AST/DeclObjC.h"
+#include "clang/AST/DeclOpenMP.h"
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/DependentDiagnostic.h"
 #include "clang/AST/ExternalASTSource.h"
@@ -39,6 +40,10 @@ using namespace clang;
 #define DECL(DERIVED, BASE) static int n##DERIVED##s = 0;
 #define ABSTRACT_DECL(DECL)
 #include "clang/AST/DeclNodes.inc"
+
+void Decl::updateOutOfDate(IdentifierInfo &II) const {
+  getASTContext().getExternalSource()->updateOutOfDateIdentifier(II);
+}
 
 void *Decl::AllocateDeserializedDecl(const ASTContext &Context, 
                                      unsigned ID,
@@ -186,8 +191,11 @@ void PrettyStackTraceDecl::print(raw_ostream &OS) const {
 
   OS << Message;
 
-  if (const NamedDecl *DN = dyn_cast_or_null<NamedDecl>(TheDecl))
-    OS << " '" << DN->getQualifiedNameAsString() << '\'';
+  if (const NamedDecl *DN = dyn_cast_or_null<NamedDecl>(TheDecl)) {
+    OS << " '";
+    DN->printQualifiedName(OS);
+    OS << '\'';
+  }
   OS << '\n';
 }
 
@@ -427,7 +435,7 @@ bool Decl::canBeWeakImported(bool &IsDefinition) const {
 
   // Variables, if they aren't definitions.
   if (const VarDecl *Var = dyn_cast<VarDecl>(this)) {
-    if (!Var->hasExternalStorage() || Var->getInit()) {
+    if (Var->isThisDeclarationADefinition()) {
       IsDefinition = true;
       return false;
     }
@@ -485,6 +493,7 @@ unsigned Decl::getIdentifierNamespaceForKind(Kind DeclKind) {
     case NonTypeTemplateParm:
     case ObjCMethod:
     case ObjCProperty:
+    case MSProperty:
       return IDNS_Ordinary;
     case Label:
       return IDNS_Label;
@@ -544,6 +553,7 @@ unsigned Decl::getIdentifierNamespaceForKind(Kind DeclKind) {
     case StaticAssert:
     case ObjCPropertyImpl:
     case Block:
+    case Captured:
     case TranslationUnit:
 
     case UsingDirective:
@@ -554,6 +564,8 @@ unsigned Decl::getIdentifierNamespaceForKind(Kind DeclKind) {
     case ObjCCategory:
     case ObjCCategoryImpl:
     case Import:
+    case OMPThreadPrivate:
+    case Empty:
       // Never looked up by name.
       return 0;
   }
@@ -692,21 +704,37 @@ void Decl::CheckAccessDeclContext() const {
 #endif
 }
 
-DeclContext *Decl::getNonClosureContext() {
-  return getDeclContext()->getNonClosureAncestor();
+static Decl::Kind getKind(const Decl *D) { return D->getKind(); }
+static Decl::Kind getKind(const DeclContext *DC) { return DC->getDeclKind(); }
+
+/// Starting at a given context (a Decl or DeclContext), look for a
+/// code context that is not a closure (a lambda, block, etc.).
+template <class T> static Decl *getNonClosureContext(T *D) {
+  if (getKind(D) == Decl::CXXMethod) {
+    CXXMethodDecl *MD = cast<CXXMethodDecl>(D);
+    if (MD->getOverloadedOperator() == OO_Call &&
+        MD->getParent()->isLambda())
+      return getNonClosureContext(MD->getParent()->getParent());
+    return MD;
+  } else if (FunctionDecl *FD = dyn_cast<FunctionDecl>(D)) {
+    return FD;
+  } else if (ObjCMethodDecl *MD = dyn_cast<ObjCMethodDecl>(D)) {
+    return MD;
+  } else if (BlockDecl *BD = dyn_cast<BlockDecl>(D)) {
+    return getNonClosureContext(BD->getParent());
+  } else if (CapturedDecl *CD = dyn_cast<CapturedDecl>(D)) {
+    return getNonClosureContext(CD->getParent());
+  } else {
+    return 0;
+  }
 }
 
-DeclContext *DeclContext::getNonClosureAncestor() {
-  DeclContext *DC = this;
+Decl *Decl::getNonClosureContext() {
+  return ::getNonClosureContext(this);
+}
 
-  // This is basically "while (DC->isClosure()) DC = DC->getParent();"
-  // except that it's significantly more efficient to cast to a known
-  // decl type and call getDeclContext() than to call getParent().
-  while (isa<BlockDecl>(DC))
-    DC = cast<BlockDecl>(DC)->getDeclContext();
-
-  assert(!DC->isClosure());
-  return DC;
+Decl *DeclContext::getNonClosureAncestor() {
+  return ::getNonClosureContext(this);
 }
 
 //===----------------------------------------------------------------------===//
@@ -791,17 +819,6 @@ bool DeclContext::isTransparentContext() const {
   return false;
 }
 
-bool DeclContext::isExternCContext() const {
-  const DeclContext *DC = this;
-  while (DC->DeclKind != Decl::TranslationUnit) {
-    if (DC->DeclKind == Decl::LinkageSpec)
-      return cast<LinkageSpecDecl>(DC)->getLanguage()
-        == LinkageSpecDecl::lang_c;
-    DC = DC->getParent();
-  }
-  return false;
-}
-
 bool DeclContext::Encloses(const DeclContext *DC) const {
   if (getPrimaryContext() != this)
     return getPrimaryContext()->Encloses(DC);
@@ -817,6 +834,7 @@ DeclContext *DeclContext::getPrimaryContext() {
   case Decl::TranslationUnit:
   case Decl::LinkageSpec:
   case Decl::Block:
+  case Decl::Captured:
     // There is only one DeclContext for these entities.
     return this;
 
@@ -913,6 +931,21 @@ DeclContext::BuildDeclChain(ArrayRef<Decl*> Decls,
   return std::make_pair(FirstNewDecl, PrevDecl);
 }
 
+/// \brief We have just acquired external visible storage, and we already have
+/// built a lookup map. For every name in the map, pull in the new names from
+/// the external storage.
+void DeclContext::reconcileExternalVisibleStorage() {
+  assert(NeedToReconcileExternalVisibleStorage && LookupPtr.getPointer());
+  NeedToReconcileExternalVisibleStorage = false;
+
+  StoredDeclsMap &Map = *LookupPtr.getPointer();
+  ExternalASTSource *Source = getParentASTContext().getExternalSource();
+  for (StoredDeclsMap::iterator I = Map.begin(); I != Map.end(); ++I) {
+    I->second.removeExternalDecls();
+    Source->FindExternalVisibleDeclsByName(this, I->first);
+  }
+}
+
 /// \brief Load the declarations within this lexical storage from an
 /// external source.
 void
@@ -963,9 +996,8 @@ ExternalASTSource::SetNoExternalVisibleDeclsForName(const DeclContext *DC,
   if (!(Map = DC->LookupPtr.getPointer()))
     Map = DC->CreateStoredDeclsMap(Context);
 
-  StoredDeclsList &List = (*Map)[Name];
-  assert(List.isNull());
-  (void) List;
+  // Add an entry to the map for this name, if it's not already present.
+  (*Map)[Name];
 
   return DeclContext::lookup_result();
 }
@@ -975,7 +1007,6 @@ ExternalASTSource::SetExternalVisibleDeclsForName(const DeclContext *DC,
                                                   DeclarationName Name,
                                                   ArrayRef<NamedDecl*> Decls) {
   ASTContext &Context = DC->getParentASTContext();
-
   StoredDeclsMap *Map;
   if (!(Map = DC->LookupPtr.getPointer()))
     Map = DC->CreateStoredDeclsMap(Context);
@@ -986,6 +1017,7 @@ ExternalASTSource::SetExternalVisibleDeclsForName(const DeclContext *DC,
     if (List.isNull())
       List.setOnlyValue(*I);
     else
+      // FIXME: Need declarationReplaces handling for redeclarations in modules.
       List.AddSubsequentDecl(*I);
   }
 
@@ -1008,6 +1040,11 @@ bool DeclContext::decls_empty() const {
     LoadLexicalDeclsFromExternalStorage();
 
   return !FirstDecl;
+}
+
+bool DeclContext::containsDecl(Decl *D) const {
+  return (D->getLexicalDeclContext() == this &&
+          (D->NextInContextAndBits.getPointer() || D == LastDecl));
 }
 
 void DeclContext::removeDecl(Decl *D) {
@@ -1127,6 +1164,7 @@ static bool shouldBeHidden(NamedDecl *D) {
 StoredDeclsMap *DeclContext::buildLookup() {
   assert(this == getPrimaryContext() && "buildLookup called on non-primary DC");
 
+  // FIXME: Should we keep going if hasExternalVisibleStorage?
   if (!LookupPtr.getInt())
     return LookupPtr.getPointer();
 
@@ -1137,6 +1175,7 @@ StoredDeclsMap *DeclContext::buildLookup() {
 
   // We no longer have any lazy decls.
   LookupPtr.setInt(false);
+  NeedToReconcileExternalVisibleStorage = false;
   return LookupPtr.getPointer();
 }
 
@@ -1175,18 +1214,33 @@ DeclContext::lookup(DeclarationName Name) {
     return PrimaryContext->lookup(Name);
 
   if (hasExternalVisibleStorage()) {
-    // If a PCH has a result for this name, and we have a local declaration, we
-    // will have imported the PCH result when adding the local declaration.
-    // FIXME: For modules, we could have had more declarations added by module
-    // imoprts since we saw the declaration of the local name.
-    if (StoredDeclsMap *Map = LookupPtr.getPointer()) {
-      StoredDeclsMap::iterator I = Map->find(Name);
-      if (I != Map->end())
-        return I->second.getLookupResult();
-    }
+    StoredDeclsMap *Map = LookupPtr.getPointer();
+    if (LookupPtr.getInt())
+      Map = buildLookup();
+    else if (NeedToReconcileExternalVisibleStorage)
+      reconcileExternalVisibleStorage();
+
+    if (!Map)
+      Map = CreateStoredDeclsMap(getParentASTContext());
+
+    // If a PCH/module has a result for this name, and we have a local
+    // declaration, we will have imported the PCH/module result when adding the
+    // local declaration or when reconciling the module.
+    std::pair<StoredDeclsMap::iterator, bool> R =
+        Map->insert(std::make_pair(Name, StoredDeclsList()));
+    if (!R.second)
+      return R.first->second.getLookupResult();
 
     ExternalASTSource *Source = getParentASTContext().getExternalSource();
-    return Source->FindExternalVisibleDeclsByName(this, Name);
+    if (Source->FindExternalVisibleDeclsByName(this, Name)) {
+      if (StoredDeclsMap *Map = LookupPtr.getPointer()) {
+        StoredDeclsMap::iterator I = Map->find(Name);
+        if (I != Map->end())
+          return I->second.getLookupResult();
+      }
+    }
+
+    return lookup_result(lookup_iterator(0), lookup_iterator(0));
   }
 
   StoredDeclsMap *Map = LookupPtr.getPointer();
@@ -1216,7 +1270,7 @@ void DeclContext::localUncachedLookup(DeclarationName Name,
   }
 
   // If we have a lookup table, check there first. Maybe we'll get lucky.
-  if (Name) {
+  if (Name && !LookupPtr.getInt()) {
     if (StoredDeclsMap *Map = LookupPtr.getPointer()) {
       StoredDeclsMap::iterator Pos = Map->find(Name);
       if (Pos != Map->end()) {

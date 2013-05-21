@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/Sema/SemaInternal.h"
+#include "clang/AST/ASTConsumer.h"
 #include "clang/AST/Attr.h"
 #include "clang/AST/Expr.h"
 #include "clang/Basic/TargetInfo.h"
@@ -263,6 +264,26 @@ void Sema::ActOnPragmaMSStruct(PragmaMSStructKind Kind) {
   MSStructPragmaOn = (Kind == PMSST_ON);
 }
 
+void Sema::ActOnPragmaMSComment(PragmaMSCommentKind Kind, llvm::StringRef Arg) {
+  // FIXME: Serialize this.
+  switch (Kind) {
+  case PCK_Unknown:
+    llvm_unreachable("unexpected pragma comment kind");
+  case PCK_Linker:
+    Consumer.HandleLinkerOptionPragma(Arg);
+    return;
+  case PCK_Lib: {
+    Consumer.HandleDependentLibrary(Arg);
+    return;
+  }
+  case PCK_Compiler:
+  case PCK_ExeStr:
+  case PCK_User:
+    return;  // We ignore all of these.
+  }
+  llvm_unreachable("invalid pragma comment kind");
+}
+
 void Sema::ActOnPragmaUnused(const Token &IdTok, Scope *curScope,
                              SourceLocation PragmaLoc) {
 
@@ -310,7 +331,7 @@ void Sema::AddPushedVisibilityAttribute(Decl *D) {
     return;
 
   NamedDecl *ND = dyn_cast<NamedDecl>(D);
-  if (ND && ND->getExplicitVisibility())
+  if (ND && ND->getExplicitVisibility(NamedDecl::VisibilityForValue))
     return;
 
   VisStack *Stack = static_cast<VisStack*>(VisContext);

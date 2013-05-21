@@ -67,6 +67,7 @@ serialization::TypeIdxFromBuiltin(const BuiltinType *BT) {
   case BuiltinType::OCLImage2d:       ID = PREDEF_TYPE_IMAGE2D_ID;      break;
   case BuiltinType::OCLImage2dArray:  ID = PREDEF_TYPE_IMAGE2D_ARR_ID;  break;
   case BuiltinType::OCLImage3d:       ID = PREDEF_TYPE_IMAGE3D_ID;      break;
+  case BuiltinType::OCLSampler:       ID = PREDEF_TYPE_SAMPLER_ID;      break;
   case BuiltinType::OCLEvent:         ID = PREDEF_TYPE_EVENT_ID;        break;
   case BuiltinType::BuiltinFn:
                                 ID = PREDEF_TYPE_BUILTIN_FN; break;
@@ -118,6 +119,7 @@ serialization::getDefinitiveDeclContext(const DeclContext *DC) {
   case Decl::CXXConversion:
   case Decl::ObjCMethod:
   case Decl::Block:
+  case Decl::Captured:
     // Objective C categories, category implementations, and class
     // implementations can only be defined in one place.
   case Decl::ObjCCategory:
@@ -167,6 +169,7 @@ bool serialization::isRedeclarableDeclKind(unsigned Kind) {
   case Decl::TypeAliasTemplate:
   case Decl::ObjCProtocol:
   case Decl::ObjCInterface:
+  case Decl::Empty:
     return true;
 
   // Never redeclarable.
@@ -178,6 +181,7 @@ bool serialization::isRedeclarableDeclKind(unsigned Kind) {
   case Decl::UnresolvedUsingValue:
   case Decl::IndirectField:
   case Decl::Field:
+  case Decl::MSProperty:
   case Decl::ObjCIvar:
   case Decl::ObjCAtDefsField:
   case Decl::ImplicitParam:
@@ -200,8 +204,10 @@ bool serialization::isRedeclarableDeclKind(unsigned Kind) {
   case Decl::FriendTemplate:
   case Decl::StaticAssert:
   case Decl::Block:
+  case Decl::Captured:
   case Decl::ClassScopeFunctionSpecialization:
   case Decl::Import:
+  case Decl::OMPThreadPrivate:
     return false;
   }
 

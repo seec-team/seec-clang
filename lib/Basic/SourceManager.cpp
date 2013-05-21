@@ -536,6 +536,43 @@ SourceManager::getFakeContentCacheForRecovery() const {
   return FakeContentCacheForRecovery;
 }
 
+/// \brief Returns the previous in-order FileID or an invalid FileID if there
+/// is no previous one.
+FileID SourceManager::getPreviousFileID(FileID FID) const {
+  if (FID.isInvalid())
+    return FileID();
+
+  int ID = FID.ID;
+  if (ID == -1)
+    return FileID();
+
+  if (ID > 0) {
+    if (ID-1 == 0)
+      return FileID();
+  } else if (unsigned(-(ID-1) - 2) >= LoadedSLocEntryTable.size()) {
+    return FileID();
+  }
+
+  return FileID::get(ID-1);
+}
+
+/// \brief Returns the next in-order FileID or an invalid FileID if there is
+/// no next one.
+FileID SourceManager::getNextFileID(FileID FID) const {
+  if (FID.isInvalid())
+    return FileID();
+
+  int ID = FID.ID;
+  if (ID > 0) {
+    if (unsigned(ID+1) >= local_sloc_entry_size())
+      return FileID();
+  } else if (ID+1 >= -1) {
+    return FileID();
+  }
+
+  return FileID::get(ID+1);
+}
+
 //===----------------------------------------------------------------------===//
 // Methods to create new FileID's and macro expansions.
 //===----------------------------------------------------------------------===//
@@ -721,7 +758,7 @@ FileID SourceManager::getFileIDLocal(unsigned SLocOffset) const {
 
   // See if this is near the file point - worst case we start scanning from the
   // most newly created FileID.
-  std::vector<SrcMgr::SLocEntry>::const_iterator I;
+  const SrcMgr::SLocEntry *I;
 
   if (LastFileIDLookup.ID < 0 ||
       LocalSLocEntryTable[LastFileIDLookup.ID].getOffset() < SLocOffset) {
@@ -840,10 +877,17 @@ FileID SourceManager::getFileIDLoaded(unsigned SLocOffset) const {
     ++NumProbes;
     unsigned MiddleIndex = (LessIndex - GreaterIndex) / 2 + GreaterIndex;
     const SrcMgr::SLocEntry &E = getLoadedSLocEntry(MiddleIndex);
+    if (E.getOffset() == 0)
+      return FileID(); // invalid entry.
 
     ++NumProbes;
 
     if (E.getOffset() > SLocOffset) {
+      // Sanity checking, otherwise a bug may lead to hanging in release build.
+      if (GreaterIndex == MiddleIndex) {
+        assert(0 && "binary search missed the entry");
+        return FileID();
+      }
       GreaterIndex = MiddleIndex;
       continue;
     }
@@ -856,6 +900,11 @@ FileID SourceManager::getFileIDLoaded(unsigned SLocOffset) const {
       return Res;
     }
 
+    // Sanity checking, otherwise a bug may lead to hanging in release build.
+    if (LessIndex == MiddleIndex) {
+      assert(0 && "binary search missed the entry");
+      return FileID();
+    }
     LessIndex = MiddleIndex;
   }
 }
@@ -984,6 +1033,77 @@ bool SourceManager::isMacroBodyExpansion(SourceLocation Loc) const {
   FileID FID = getFileID(Loc);
   const SrcMgr::ExpansionInfo &Expansion = getSLocEntry(FID).getExpansion();
   return Expansion.isMacroBodyExpansion();
+}
+
+bool SourceManager::isAtStartOfImmediateMacroExpansion(SourceLocation Loc,
+                                             SourceLocation *MacroBegin) const {
+  assert(Loc.isValid() && Loc.isMacroID() && "Expected a valid macro loc");
+
+  std::pair<FileID, unsigned> DecompLoc = getDecomposedLoc(Loc);
+  if (DecompLoc.second > 0)
+    return false; // Does not point at the start of expansion range.
+
+  bool Invalid = false;
+  const SrcMgr::ExpansionInfo &ExpInfo =
+      getSLocEntry(DecompLoc.first, &Invalid).getExpansion();
+  if (Invalid)
+    return false;
+  SourceLocation ExpLoc = ExpInfo.getExpansionLocStart();
+
+  if (ExpInfo.isMacroArgExpansion()) {
+    // For macro argument expansions, check if the previous FileID is part of
+    // the same argument expansion, in which case this Loc is not at the
+    // beginning of the expansion.
+    FileID PrevFID = getPreviousFileID(DecompLoc.first);
+    if (!PrevFID.isInvalid()) {
+      const SrcMgr::SLocEntry &PrevEntry = getSLocEntry(PrevFID, &Invalid);
+      if (Invalid)
+        return false;
+      if (PrevEntry.isExpansion() &&
+          PrevEntry.getExpansion().getExpansionLocStart() == ExpLoc)
+        return false;
+    }
+  }
+
+  if (MacroBegin)
+    *MacroBegin = ExpLoc;
+  return true;
+}
+
+bool SourceManager::isAtEndOfImmediateMacroExpansion(SourceLocation Loc,
+                                               SourceLocation *MacroEnd) const {
+  assert(Loc.isValid() && Loc.isMacroID() && "Expected a valid macro loc");
+
+  FileID FID = getFileID(Loc);
+  SourceLocation NextLoc = Loc.getLocWithOffset(1);
+  if (isInFileID(NextLoc, FID))
+    return false; // Does not point at the end of expansion range.
+
+  bool Invalid = false;
+  const SrcMgr::ExpansionInfo &ExpInfo =
+      getSLocEntry(FID, &Invalid).getExpansion();
+  if (Invalid)
+    return false;
+
+  if (ExpInfo.isMacroArgExpansion()) {
+    // For macro argument expansions, check if the next FileID is part of the
+    // same argument expansion, in which case this Loc is not at the end of the
+    // expansion.
+    FileID NextFID = getNextFileID(FID);
+    if (!NextFID.isInvalid()) {
+      const SrcMgr::SLocEntry &NextEntry = getSLocEntry(NextFID, &Invalid);
+      if (Invalid)
+        return false;
+      if (NextEntry.isExpansion() &&
+          NextEntry.getExpansion().getExpansionLocStart() ==
+              ExpInfo.getExpansionLocStart())
+        return false;
+    }
+  }
+
+  if (MacroEnd)
+    *MacroEnd = ExpInfo.getExpansionLocEnd();
+  return true;
 }
 
 
@@ -1460,13 +1580,13 @@ unsigned SourceManager::getFileIDSize(FileID FID) const {
 ///
 /// This routine involves a system call, and therefore should only be used
 /// in non-performance-critical code.
-static llvm::Optional<ino_t> getActualFileInode(const FileEntry *File) {
+static Optional<ino_t> getActualFileInode(const FileEntry *File) {
   if (!File)
-    return llvm::Optional<ino_t>();
+    return None;
   
   struct stat StatBuf;
   if (::stat(File->getName(), &StatBuf))
-    return llvm::Optional<ino_t>();
+    return None;
     
   return StatBuf.st_ino;
 }
@@ -1497,8 +1617,8 @@ FileID SourceManager::translateFile(const FileEntry *SourceFile) const {
 
   // First, check the main file ID, since it is common to look for a
   // location in the main file.
-  llvm::Optional<ino_t> SourceFileInode;
-  llvm::Optional<StringRef> SourceFileName;
+  Optional<ino_t> SourceFileInode;
+  Optional<StringRef> SourceFileName;
   if (!MainFileID.isInvalid()) {
     bool Invalid = false;
     const SLocEntry &MainSLoc = getSLocEntry(MainFileID, &Invalid);
@@ -1520,8 +1640,7 @@ FileID SourceManager::translateFile(const FileEntry *SourceFile) const {
         if (*SourceFileName == llvm::sys::path::filename(MainFile->getName())) {
           SourceFileInode = getActualFileInode(SourceFile);
           if (SourceFileInode) {
-            if (llvm::Optional<ino_t> MainFileInode 
-                                               = getActualFileInode(MainFile)) {
+            if (Optional<ino_t> MainFileInode = getActualFileInode(MainFile)) {
               if (*SourceFileInode == *MainFileInode) {
                 FirstFID = MainFileID;
                 SourceFile = MainFile;
@@ -1585,7 +1704,7 @@ FileID SourceManager::translateFile(const FileEntry *SourceFile) const {
       const FileEntry *Entry =FileContentCache? FileContentCache->OrigEntry : 0;
         if (Entry && 
             *SourceFileName == llvm::sys::path::filename(Entry->getName())) {
-          if (llvm::Optional<ino_t> EntryInode = getActualFileInode(Entry)) {
+          if (Optional<ino_t> EntryInode = getActualFileInode(Entry)) {
             if (*SourceFileInode == *EntryInode) {
               FirstFID = FileID::get(I);
               SourceFile = Entry;
@@ -1837,26 +1956,70 @@ SourceManager::getMacroArgExpandedLocation(SourceLocation Loc) const {
   return Loc;
 }
 
+std::pair<FileID, unsigned>
+SourceManager::getDecomposedIncludedLoc(FileID FID) const {
+  // Uses IncludedLocMap to retrieve/cache the decomposed loc.
+
+  typedef std::pair<FileID, unsigned> DecompTy;
+  typedef llvm::DenseMap<FileID, DecompTy> MapTy;
+  std::pair<MapTy::iterator, bool>
+    InsertOp = IncludedLocMap.insert(std::make_pair(FID, DecompTy()));
+  DecompTy &DecompLoc = InsertOp.first->second;
+  if (!InsertOp.second)
+    return DecompLoc; // already in map.
+
+  SourceLocation UpperLoc;
+  const SrcMgr::SLocEntry &Entry = getSLocEntry(FID);
+  if (Entry.isExpansion())
+    UpperLoc = Entry.getExpansion().getExpansionLocStart();
+  else
+    UpperLoc = Entry.getFile().getIncludeLoc();
+
+  if (UpperLoc.isValid())
+    DecompLoc = getDecomposedLoc(UpperLoc);
+
+  return DecompLoc;
+}
+
 /// Given a decomposed source location, move it up the include/expansion stack
 /// to the parent source location.  If this is possible, return the decomposed
 /// version of the parent in Loc and return false.  If Loc is the top-level
 /// entry, return true and don't modify it.
 static bool MoveUpIncludeHierarchy(std::pair<FileID, unsigned> &Loc,
                                    const SourceManager &SM) {
-  SourceLocation UpperLoc;
-  const SrcMgr::SLocEntry &Entry = SM.getSLocEntry(Loc.first);
-  if (Entry.isExpansion())
-    UpperLoc = Entry.getExpansion().getExpansionLocStart();
-  else
-    UpperLoc = Entry.getFile().getIncludeLoc();
-  
-  if (UpperLoc.isInvalid())
+  std::pair<FileID, unsigned> UpperLoc = SM.getDecomposedIncludedLoc(Loc.first);
+  if (UpperLoc.first.isInvalid())
     return true; // We reached the top.
-  
-  Loc = SM.getDecomposedLoc(UpperLoc);
+
+  Loc = UpperLoc;
   return false;
 }
-  
+
+/// Return the cache entry for comparing the given file IDs
+/// for isBeforeInTranslationUnit.
+InBeforeInTUCacheEntry &SourceManager::getInBeforeInTUCache(FileID LFID,
+                                                            FileID RFID) const {
+  // This is a magic number for limiting the cache size.  It was experimentally
+  // derived from a small Objective-C project (where the cache filled
+  // out to ~250 items).  We can make it larger if necessary.
+  enum { MagicCacheSize = 300 };
+  IsBeforeInTUCacheKey Key(LFID, RFID);
+
+  // If the cache size isn't too large, do a lookup and if necessary default
+  // construct an entry.  We can then return it to the caller for direct
+  // use.  When they update the value, the cache will get automatically
+  // updated as well.
+  if (IBTUCache.size() < MagicCacheSize)
+    return IBTUCache[Key];
+
+  // Otherwise, do a lookup that will not construct a new value.
+  InBeforeInTUCache::iterator I = IBTUCache.find(Key);
+  if (I != IBTUCache.end())
+    return I->second;
+
+  // Fall back to the overflow value.
+  return IBTUCacheOverflow;
+}
 
 /// \brief Determines the order of 2 source locations in the translation unit.
 ///
@@ -1876,6 +2039,11 @@ bool SourceManager::isBeforeInTranslationUnit(SourceLocation LHS,
 
   // If we are comparing a source location with multiple locations in the same
   // file, we get a big win by caching the result.
+  InBeforeInTUCacheEntry &IsBeforeInTUCache =
+    getInBeforeInTUCache(LOffs.first, ROffs.first);
+
+  // If we are comparing a source location with multiple locations in the same
+  // file, we get a big win by caching the result.
   if (IsBeforeInTUCache.isCacheValid(LOffs.first, ROffs.first))
     return IsBeforeInTUCache.getCachedResult(LOffs.second, ROffs.second);
 
@@ -1888,7 +2056,7 @@ bool SourceManager::isBeforeInTranslationUnit(SourceLocation LHS,
   // of the other looking for a match.
   // We use a map from FileID to Offset to store the chain. Easier than writing
   // a custom set hash info that only depends on the first part of a pair.
-  typedef llvm::DenseMap<FileID, unsigned> LocSet;
+  typedef llvm::SmallDenseMap<FileID, unsigned, 16> LocSet;
   LocSet LChain;
   do {
     LChain.insert(LOffs);
