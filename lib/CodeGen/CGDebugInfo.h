@@ -48,7 +48,7 @@ namespace CodeGen {
 /// the backend.
 class CGDebugInfo {
   CodeGenModule &CGM;
-  CodeGenOptions::DebugInfoKind DebugKind;
+  const CodeGenOptions::DebugInfoKind DebugKind;
   llvm::DIBuilder DBuilder;
   llvm::DICompileUnit TheCU;
   SourceLocation CurLoc, PrevLoc;
@@ -101,6 +101,7 @@ class CGDebugInfo {
   /// using declarations) that aren't covered by other more specific caches.
   llvm::DenseMap<const Decl *, llvm::WeakVH> DeclCache;
   llvm::DenseMap<const NamespaceDecl *, llvm::WeakVH> NameSpaceCache;
+  llvm::DenseMap<const NamespaceAliasDecl *, llvm::WeakVH> NamespaceAliasCache;
   llvm::DenseMap<const Decl *, llvm::WeakVH> StaticDataMemberCache;
 
   /// Helper functions for getOrCreateType.
@@ -128,12 +129,12 @@ class CGDebugInfo {
   llvm::DIType CreateSelfType(const QualType &QualTy, llvm::DIType Ty);
   llvm::DIType getTypeOrNull(const QualType);
   llvm::DIType getCompletedTypeOrNull(const QualType);
-  llvm::DIType getOrCreateMethodType(const CXXMethodDecl *Method,
-                                     llvm::DIFile F);
-  llvm::DIType getOrCreateInstanceMethodType(
+  llvm::DICompositeType getOrCreateMethodType(const CXXMethodDecl *Method,
+                                              llvm::DIFile F);
+  llvm::DICompositeType getOrCreateInstanceMethodType(
       QualType ThisPtr, const FunctionProtoType *Func, llvm::DIFile Unit);
-  llvm::DIType getOrCreateFunctionType(const Decl *D, QualType FnType,
-                                       llvm::DIFile F);
+  llvm::DICompositeType getOrCreateFunctionType(const Decl *D, QualType FnType,
+                                                llvm::DIFile F);
   llvm::DIType getOrCreateVTablePtrType(llvm::DIFile F);
   llvm::DINameSpace getOrCreateNameSpace(const NamespaceDecl *N);
   llvm::DIType CreatePointeeType(QualType PointeeTy, llvm::DIFile F);
@@ -276,6 +277,9 @@ public:
 
   /// \brief - Emit C++ using declaration.
   void EmitUsingDecl(const UsingDecl &UD);
+
+  /// \brief - Emit C++ namespace alias.
+  llvm::DIImportedEntity EmitNamespaceAlias(const NamespaceAliasDecl &NA);
 
   /// getOrCreateRecordType - Emit record type's standalone debug info.
   llvm::DIType getOrCreateRecordType(QualType Ty, SourceLocation L);
