@@ -98,10 +98,13 @@ private:
   llvm::SmallVector<NodeRef, 32> NodeStack;
   
   /// Creates metadata to describe statement mappings.
-  ::seec::clang::StmtMapping::MetadataWriter MDWriter;
+  ::seec::clang::MetadataWriter MDWriter;
   
   /// Metadata for all known mappings.
-  std::vector< ::llvm::MDNode *> MDMappings;
+  std::vector< ::llvm::MDNode * > MDStmtMappings;
+  
+  /// Metadata for all param mappings.
+  std::vector< ::llvm::MDNode * > MDParamMappings;
   
   
   //----------------------------------------------------------------------------
@@ -130,7 +133,8 @@ public:
     MDKindIDForDeclPtr(Context.getMDKindID("seec.clang.decl.ptr")),
     NodeStack(),
     MDWriter(Context),
-    MDMappings()
+    MDStmtMappings(),
+    MDParamMappings()
   {
     if (SEEC_CLANG_DEBUG)
       llvm::errs() << "MetadataInserter()\n";
@@ -140,14 +144,26 @@ public:
     if (SEEC_CLANG_DEBUG)
       llvm::errs() << "~MetadataInserter()\n";
     
-    llvm::NamedMDNode *GlobalMD
+    typedef std::vector< ::llvm::MDNode * >::iterator IterTy;
+    
+    // Add all Stmt mappings.
+    llvm::NamedMDNode *GlobalStmtMapMD
       = Module.getOrInsertNamedMetadata(
         ::seec::clang::StmtMapping::getGlobalMDNameForMapping());
     
-    typedef std::vector< ::llvm::MDNode *>::iterator IterTy;
-    for (IterTy It = MDMappings.begin(), End = MDMappings.end();
+    for (IterTy It = MDStmtMappings.begin(), End = MDStmtMappings.end();
          It != End; ++It) {
-      GlobalMD->addOperand(*It);
+      GlobalStmtMapMD->addOperand(*It);
+    }
+    
+    // Add all parameter mappings.
+    llvm::NamedMDNode *GlobalParamMapMD
+      = Module.getOrInsertNamedMetadata(
+        ::seec::clang::ParamMapping::getGlobalMDNameForMapping());
+    
+    for (IterTy It = MDParamMappings.begin(), End = MDParamMappings.end();
+         It != End; ++It) {
+      GlobalParamMapMD->addOperand(*It);
     }
   }
   
@@ -220,7 +236,7 @@ public:
 
     if (Value.isSimple()) {
       if (llvm::Value *Addr = Value.getAddress()) {
-        MDMappings.push_back(
+        MDStmtMappings.push_back(
           MDWriter.getMetadataFor(
             ::seec::clang::StmtMapping::forLValSimple(S, Addr)));
       }
@@ -252,7 +268,7 @@ public:
 
     if (Value.isScalar()) {
       if (llvm::Value *Val = Value.getScalarVal()) {
-        MDMappings.push_back(
+        MDStmtMappings.push_back(
           MDWriter.getMetadataFor(
             ::seec::clang::StmtMapping::forRValScalar(S, Val)));
       }
@@ -267,7 +283,7 @@ public:
     }
     else if (Value.isAggregate()) {
       if (llvm::Value *Addr = Value.getAggregateAddr()) {
-        MDMappings.push_back(
+        MDStmtMappings.push_back(
           MDWriter.getMetadataFor(
             ::seec::clang::StmtMapping::forRValAggregate(S, Addr)));
       }
@@ -276,6 +292,17 @@ public:
           llvm::errs() << "aggregate: null getAggregateAddr()!\n";
       }
     }
+  }
+  
+  /// \brief Mark a parameter Decl.
+  ///
+  /// \param Param The parameter's declaration.
+  /// \param Pointer Pointer to the parameter's storage.
+  ///
+  void markParameter(VarDecl const &Param, llvm::Value *Pointer) {
+    MDParamMappings.push_back(
+      MDWriter.getMetadataFor(
+        ::seec::clang::ParamMapping(&Param, Pointer)));
   }
 };
 

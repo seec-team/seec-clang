@@ -1693,6 +1693,8 @@ void CodeGenFunction::EmitParmDecl(const VarDecl &D, llvm::Value *Arg,
   llvm::Value *&DMEntry = LocalDeclMap[&D];
   assert(DMEntry == 0 && "Decl already exists in localdeclmap!");
   DMEntry = DeclPtr;
+  
+  MDInserter.markParameter(D, DeclPtr);
 
   // Emit debug info for param declaration.
   if (CGDebugInfo *DI = getDebugInfo()) {

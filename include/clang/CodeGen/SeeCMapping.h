@@ -102,7 +102,7 @@ public:
   /// @{
   
   static char const *getGlobalMDNameForMapping() {
-    return "seec.clang.map.ptr";
+    return "seec.clang.map.stmt.ptr";
   }
   
   /// @}
@@ -122,103 +122,167 @@ public:
   }
   
   /// @} (Accessors)
+};
+
+/// \brief Provides mapping for a function parameter.
+///
+class ParamMapping {
+  /// The mapped clang::Decl.
+  ::clang::Decl const *Declaration;
+  
+  /// The llvm::Value that it is mapped to.
+  llvm::Value *Val;
+    
+public:
+  /// \name Constructors
+  /// @{
+  
+  /// \brief Create a mapping from a clang::Decl to a single llvm::Value.
+  ///
+  ParamMapping(::clang::Decl const *ForDeclaration,
+               llvm::Value *ForValue)
+  : Declaration(ForDeclaration),
+    Val(ForValue)
+  {}
+  
+  /// @}
   
   
-  /// \brief Write StmtMapping objects to metadata.
-  class MetadataWriter {
-    /// The LLVMContext for the metadata this writer will create.
-    ::llvm::LLVMContext &Context;
+  /// \name Static information
+  /// @{
+  
+  static char const *getGlobalMDNameForMapping() {
+    return "seec.clang.map.param.ptr";
+  }
+  
+  /// @}
+  
+  
+  /// \name Accessors
+  /// @{
+  
+  ::clang::Decl const *getDecl() const { return Declaration; }
+  
+  llvm::Value *getValue() const { return Val; }
+  
+  /// @} (Accessors)
+};
+
+/// \brief Write mappings to metadata.
+///
+class MetadataWriter {
+  /// The LLVMContext for the metadata this writer will create.
+  ::llvm::LLVMContext &Context;
+  
+  /// String that identifies Argument-type values.
+  llvm::MDString *ValueTypeArgument;
+  
+  /// String that identifies Instruction-type values.
+  llvm::MDString *ValueTypeInstruction;
+  
+  /// String that identifies all other Values.
+  llvm::MDString *ValueTypeValue;
+  
+  /// \brief Get an identifier for V that can be stored in an MDNode.
+  ///
+  ::llvm::Value *getMapForValue(::llvm::Value *V) const {
+    if (!V)
+      return V;
     
-    /// String that identifies Argument-type values.
-    llvm::MDString *ValueTypeArgument;
-    
-    /// String that identifies Instruction-type values.
-    llvm::MDString *ValueTypeInstruction;
-    
-    /// String that identifies all other Values.
-    llvm::MDString *ValueTypeValue;
-    
-    /// \brief Get an identifier for V that can be stored in an MDNode.
-    ::llvm::Value *getMapForValue(::llvm::Value *V) const {
-      if (!V)
-        return V;
+    // We identify Arguments by storing their argument number.
+    if (::llvm::Argument *Arg = ::llvm::dyn_cast< ::llvm::Argument>(V)) {
+      ::llvm::Type *i32 = ::llvm::Type::getInt32Ty(Context);
       
-      // We identify Arguments by storing their argument number.
-      if (::llvm::Argument *Arg = ::llvm::dyn_cast< ::llvm::Argument>(V)) {
-        ::llvm::Type *i32 = ::llvm::Type::getInt32Ty(Context);
-        
-        ::llvm::Value *Operands[] = {
-          ValueTypeArgument,
-          Arg->getParent(), // Containing ::llvm::Function.
-          ::llvm::ConstantInt::get(i32, Arg->getArgNo())
-        };
-        
-        return ::llvm::MDNode::get(Context, Operands);
-      }
+      ::llvm::Value *Operands[] = {
+        ValueTypeArgument,
+        Arg->getParent(), // Containing ::llvm::Function.
+        ::llvm::ConstantInt::get(i32, Arg->getArgNo())
+      };
       
-      // We identify the Instructions by storing their memory address as a 64
-      // bit constant integer. After the compilation has been completed, we'll
-      // find this and update it to use the Instruction's index in the Function.
-      if (::llvm::Instruction *I = ::llvm::dyn_cast< ::llvm::Instruction>(V)) {
-        ::llvm::Type *i64 = ::llvm::Type::getInt64Ty(Context);
-        
-        ::llvm::Value *Operands[] = {
-          ValueTypeInstruction,
-          I->getParent()->getParent(), // Containing ::llvm::Function.
-          ::llvm::ConstantInt::get(i64, reinterpret_cast<uintptr_t>(I))
-        };
-        
-        return ::llvm::MDNode::get(Context, Operands);
-      }
-      
-      // All other Value types should be safe to store as they are.
-      ::llvm::Value *Operands[] = { ValueTypeValue, V };
       return ::llvm::MDNode::get(Context, Operands);
     }
     
-    /// \brief Get a string identifying the given MapType.
-    ::llvm::MDString *getMapTypeString(MapType Type) const {
-      switch (Type) {
-        case LValSimple:
-          return ::llvm::MDString::get(Context, "lvalsimple");
-        case RValScalar:
-          return ::llvm::MDString::get(Context, "rvalscalar");
-        case RValAggregate:
-          return ::llvm::MDString::get(Context, "rvalaggregate");
-      }
-      
-      return ::llvm::MDString::get(Context, "invalid");
-    }
-    
-  public:
-    /// \brief Construct a new MetadataWriter for the given LLVMContext.
-    MetadataWriter(::llvm::LLVMContext &ForContext)
-    : Context(ForContext),
-      ValueTypeArgument(llvm::MDString::get(Context, "argument")),
-      ValueTypeInstruction(llvm::MDString::get(Context, "instruction")),
-      ValueTypeValue(llvm::MDString::get(Context, "value"))
-    {}
-    
-    /// \brief Get an ::llvm::MDNode describing the given StmtMapping.
-    ::llvm::MDNode *getMetadataFor(StmtMapping const &Mapping) {
-      // Get a string identifying the mapping type.
-      ::llvm::MDString *MapStr = getMapTypeString(Mapping.getType());
-      
-      // Make a constant int holding the address of the Stmt.
-      uintptr_t PtrInt = reinterpret_cast<uintptr_t>(Mapping.getStmt());
+    // We identify the Instructions by storing their memory address as a 64
+    // bit constant integer. After the compilation has been completed, we'll
+    // find this and update it to use the Instruction's index in the Function.
+    if (::llvm::Instruction *I = ::llvm::dyn_cast< ::llvm::Instruction>(V)) {
       ::llvm::Type *i64 = ::llvm::Type::getInt64Ty(Context);
-      ::llvm::Value *StmtAddr = ::llvm::ConstantInt::get(i64, PtrInt);
       
       ::llvm::Value *Operands[] = {
-        MapStr,
-        StmtAddr,
-        getMapForValue(Mapping.getValue()),
-        getMapForValue(Mapping.getValues().second)
+        ValueTypeInstruction,
+        I->getParent()->getParent(), // Containing ::llvm::Function.
+        ::llvm::ConstantInt::get(i64, reinterpret_cast<uintptr_t>(I))
       };
       
-      return llvm::MDNode::get(Context, Operands);
+      return ::llvm::MDNode::get(Context, Operands);
     }
-  };
+    
+    // All other Value types should be safe to store as they are.
+    ::llvm::Value *Operands[] = { ValueTypeValue, V };
+    return ::llvm::MDNode::get(Context, Operands);
+  }
+  
+  /// \brief Get a string identifying the given MapType.
+  ///
+  ::llvm::MDString *getMapTypeString(StmtMapping::MapType Type) const {
+    switch (Type) {
+      case StmtMapping::LValSimple:
+        return ::llvm::MDString::get(Context, "lvalsimple");
+      case StmtMapping::RValScalar:
+        return ::llvm::MDString::get(Context, "rvalscalar");
+      case StmtMapping::RValAggregate:
+        return ::llvm::MDString::get(Context, "rvalaggregate");
+    }
+    
+    return ::llvm::MDString::get(Context, "invalid");
+  }
+  
+public:
+  /// \brief Construct a new MetadataWriter for the given LLVMContext.
+  ///
+  MetadataWriter(::llvm::LLVMContext &ForContext)
+  : Context(ForContext),
+    ValueTypeArgument(llvm::MDString::get(Context, "argument")),
+    ValueTypeInstruction(llvm::MDString::get(Context, "instruction")),
+    ValueTypeValue(llvm::MDString::get(Context, "value"))
+  {}
+  
+  /// \brief Get an ::llvm::MDNode describing the given StmtMapping.
+  ///
+  ::llvm::MDNode *getMetadataFor(StmtMapping const &Mapping) {
+    // Get a string identifying the mapping type.
+    ::llvm::MDString *MapStr = getMapTypeString(Mapping.getType());
+    
+    // Make a constant int holding the address of the Stmt.
+    uintptr_t PtrInt = reinterpret_cast<uintptr_t>(Mapping.getStmt());
+    ::llvm::Type *i64 = ::llvm::Type::getInt64Ty(Context);
+    ::llvm::Value *StmtAddr = ::llvm::ConstantInt::get(i64, PtrInt);
+    
+    ::llvm::Value *Operands[] = {
+      MapStr,
+      StmtAddr,
+      getMapForValue(Mapping.getValue()),
+      getMapForValue(Mapping.getValues().second)
+    };
+    
+    return llvm::MDNode::get(Context, Operands);
+  }
+  
+  /// \brief Get an ::llvm::MDNode describing the given ParamMapping.
+  ///
+  ::llvm::MDNode *getMetadataFor(ParamMapping const &Mapping) {
+    // Make a constant int holding the address of the Decl.
+    uintptr_t PtrInt = reinterpret_cast<uintptr_t>(Mapping.getDecl());
+    ::llvm::Type *i64 = ::llvm::Type::getInt64Ty(Context);
+    ::llvm::Value *DeclAddr = ::llvm::ConstantInt::get(i64, PtrInt);
+    
+    ::llvm::Value *Operands[] = {
+      DeclAddr,
+      getMapForValue(Mapping.getValue())
+    };
+    
+    return llvm::MDNode::get(Context, Operands);
+  }
 };
 
 } // namespace clang
