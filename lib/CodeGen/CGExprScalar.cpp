@@ -145,8 +145,10 @@ public:
         // If there aren't any more uses, zap the instruction to save space.
         // Note that there can be more uses, for example if this
         // is the result of an assignment.
-        if (ZI->use_empty())
-          ZI->eraseFromParent();
+        // SeeC: Disable this, because sometimes the intermediate int value is
+        // mapped to a Stmt, and we want it to be displayed to the user.
+        // if (ZI->use_empty())
+        //   ZI->eraseFromParent();
         return Result;
       }
     }
