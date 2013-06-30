@@ -184,6 +184,7 @@ FileManager::FileManager(const FileSystemOptions &FSO)
   : FileSystemOpts(FSO),
     UniqueRealDirs(*new UniqueDirContainer()),
     UniqueRealFiles(*new UniqueFileContainer()),
+    DisableNonVirtualFiles(false),
     SeenDirEntries(64), SeenFileEntries(64), NextFileUID(0) {
   NumDirLookups = NumFileLookups = 0;
   NumDirCacheMisses = NumFileCacheMisses = 0;
@@ -351,6 +352,9 @@ const FileEntry *FileManager::getFile(StringRef Filename, bool openFile,
                  ? 0 : NamedFileEnt.getValue();
 
   ++NumFileCacheMisses;
+  
+  if (DisableNonVirtualFiles)
+    return 0;
 
   // By default, initialize it to invalid.
   NamedFileEnt.setValue(NON_EXISTENT_FILE);
@@ -450,7 +454,8 @@ FileManager::getVirtualFile(StringRef Filename, off_t Size,
   // Check to see if the file exists. If so, drop the virtual file
   struct stat StatBuf;
   const char *InterndFileName = NamedFileEnt.getKeyData();
-  if (getStatValue(InterndFileName, StatBuf, true, 0) == 0) {
+  if (!DisableNonVirtualFiles &&
+      getStatValue(InterndFileName, StatBuf, true, 0) == 0) {
     StatBuf.st_size = Size;
     StatBuf.st_mtime = ModificationTime;
     UFE = &UniqueRealFiles.getFile(InterndFileName, StatBuf);
