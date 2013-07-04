@@ -20,7 +20,7 @@
 
 #include <cassert>
 
-#define SEEC_CLANG_DEBUG 1
+#define SEEC_CLANG_DEBUG 0
 
 namespace clang {
 
