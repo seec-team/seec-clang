@@ -31,6 +31,8 @@ using namespace CodeGen;
 
 
 void CodeGenFunction::EmitDecl(const Decl &D) {
+  seec::PushDeclForScope X(MDInserter, &D);
+
   switch (D.getKind()) {
   case Decl::TranslationUnit:
   case Decl::Namespace:
@@ -1053,6 +1055,8 @@ void CodeGenFunction::EmitAutoVarInit(const AutoVarEmission &emission) {
   // If this local has an initializer, emit it now.
   const Expr *Init = D.getInit();
 
+  seec::PushStmtForScope SeeCPush(MDInserter, Init);
+
   // If we are at an unreachable point, we don't need to emit the initializer
   // unless it contains a label.
   if (!HaveInsertPoint()) {
@@ -1687,6 +1691,8 @@ void CodeGenFunction::EmitParmDecl(const VarDecl &D, llvm::Value *Arg,
   llvm::Value *&DMEntry = LocalDeclMap[&D];
   assert(DMEntry == 0 && "Decl already exists in localdeclmap!");
   DMEntry = DeclPtr;
+
+  MDInserter.markParameter(D, DeclPtr);
 
   // Emit debug info for param declaration.
   if (CGDebugInfo *DI = getDebugInfo()) {

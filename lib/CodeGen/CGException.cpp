@@ -1545,7 +1545,8 @@ static llvm::Constant *getClangCallTerminateFn(CodeGenModule &CGM) {
     // Set up the function.
     llvm::BasicBlock *entry =
       llvm::BasicBlock::Create(CGM.getLLVMContext(), "", fn);
-    CGBuilderTy builder(entry);
+    clang::CodeGen::seec::MetadataInserter MDInserter(CGM.getModule());
+    CGBuilderTy builder(entry, MDInserter);
 
     // Pull the exception pointer out of the parameter list.
     llvm::Value *exn = &*fn->arg_begin();

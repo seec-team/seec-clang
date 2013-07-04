@@ -107,6 +107,11 @@ public:
   //                            Visitor Methods
   //===--------------------------------------------------------------------===//
 
+  void Visit(Stmt *S) {
+    CodeGen::seec::PushStmtForScope X(CGF.MDInserter, S);
+    StmtVisitor<AggExprEmitter>::Visit(S);
+  }
+
   void VisitStmt(Stmt *S) {
     CGF.ErrorUnsupported(S, "aggregate expression");
   }

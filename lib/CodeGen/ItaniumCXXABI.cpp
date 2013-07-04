@@ -1345,7 +1345,8 @@ void ItaniumCXXABI::EmitThreadLocalInitFuncs(
     llvm::Function *Wrapper = getOrCreateThreadLocalWrapper(VD, Var);
     llvm::LLVMContext &Context = CGM.getModule().getContext();
     llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "", Wrapper);
-    CGBuilderTy Builder(Entry);
+    clang::CodeGen::seec::MetadataInserter MDInserter(CGM.getModule());
+    CGBuilderTy Builder(Entry, MDInserter);
     if (InitIsInitFunc) {
       if (Init)
         Builder.CreateCall(Init);
