@@ -168,6 +168,51 @@ public:
   /// @} (Accessors)
 };
 
+/// \brief Provides mapping for a local variable.
+///
+class LocalMapping {
+  /// The mapped clang::VarDecl.
+  ::clang::VarDecl const *Declaration;
+
+  /// The llvm::Value that it is mapped to.
+  llvm::Value *Val;
+
+public:
+  /// \name Constructors
+  /// @{
+
+  /// \brief Create a mapping from a clang::VarDecl to a single llvm::Value.
+  /// The llvm::Value holds (or produces) the address of the variable.
+  ///
+  LocalMapping(::clang::VarDecl const *ForDeclaration,
+               llvm::Value *ForValue)
+  : Declaration(ForDeclaration),
+    Val(ForValue)
+  {}
+
+  /// @}
+
+
+  /// \name Static information
+  /// @{
+
+  static char const *getGlobalMDNameForMapping() {
+    return "seec.clang.map.local.ptr";
+  }
+
+  /// @}
+
+
+  /// \name Accessors
+  /// @{
+
+  ::clang::VarDecl const *getDecl() const { return Declaration; }
+
+  llvm::Value *getValue() const { return Val; }
+
+  /// @} (Accessors)
+};
+
 /// \brief Write mappings to metadata.
 ///
 class MetadataWriter {
@@ -273,6 +318,22 @@ public:
   ::llvm::MDNode *getMetadataFor(ParamMapping const &Mapping) {
     // Make a constant int holding the address of the Decl.
     uintptr_t PtrInt = reinterpret_cast<uintptr_t>(Mapping.getDecl());
+    ::llvm::Type *i64 = ::llvm::Type::getInt64Ty(Context);
+    ::llvm::Value *DeclAddr = ::llvm::ConstantInt::get(i64, PtrInt);
+
+    ::llvm::Value *Operands[] = {
+      DeclAddr,
+      getMapForValue(Mapping.getValue())
+    };
+
+    return llvm::MDNode::get(Context, Operands);
+  }
+
+  /// \brief Get an ::llvm::MDNode describing the given LocalMapping.
+  ///
+  ::llvm::MDNode *getMetadataFor(LocalMapping const &Mapping) {
+    // Make a constant int holding the address of the Decl.
+    uintptr_t const PtrInt = reinterpret_cast<uintptr_t>(Mapping.getDecl());
     ::llvm::Type *i64 = ::llvm::Type::getInt64Ty(Context);
     ::llvm::Value *DeclAddr = ::llvm::ConstantInt::get(i64, PtrInt);
 

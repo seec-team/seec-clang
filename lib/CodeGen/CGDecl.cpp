@@ -306,6 +306,8 @@ void CodeGenFunction::EmitStaticVarDecl(const VarDecl &D,
   DMEntry = addr;
   CGM.setStaticLocalDeclAddress(&D, addr);
 
+  MDInserter.markLocal(D, addr);
+
   // We can't have a VLA here, but we can have a pointer to a VLA,
   // even though that doesn't really make any sense.
   // Make sure to evaluate VLA bounds now so that we have them for later.
@@ -959,6 +961,8 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
   assert(DMEntry == 0 && "Decl already exists in localdeclmap!");
   DMEntry = DeclPtr;
   emission.Address = DeclPtr;
+
+  MDInserter.markLocal(D, DeclPtr);
 
   // Emit debug info for local var declaration.
   if (HaveInsertPoint())

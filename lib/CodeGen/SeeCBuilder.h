@@ -106,6 +106,9 @@ private:
   /// Metadata for all param mappings.
   std::vector< ::llvm::MDNode * > MDParamMappings;
 
+  /// Metadata for all local (non-param) mappings.
+  std::vector< ::llvm::MDNode * > MDLocalMappings;
+
 
   //----------------------------------------------------------------------------
   // Methods
@@ -164,6 +167,16 @@ public:
     for (IterTy It = MDParamMappings.begin(), End = MDParamMappings.end();
          It != End; ++It) {
       GlobalParamMapMD->addOperand(*It);
+    }
+
+    // Add all local (non-parameter) mappings.
+    llvm::NamedMDNode *GlobalLocalMapMD
+      = Module.getOrInsertNamedMetadata(
+        ::seec::clang::LocalMapping::getGlobalMDNameForMapping());
+
+    for (IterTy It = MDLocalMappings.begin(), End = MDLocalMappings.end();
+         It != End; ++It) {
+      GlobalLocalMapMD->addOperand(*It);
     }
   }
 
@@ -303,6 +316,17 @@ public:
     MDParamMappings.push_back(
       MDWriter.getMetadataFor(
         ::seec::clang::ParamMapping(&Param, Pointer)));
+  }
+  
+  /// \brief Mark a local variable Decl.
+  ///
+  /// \param TheDecl The local's declaration.
+  /// \param Address The local's address.
+  ///
+  void markLocal(VarDecl const &TheDecl, llvm::Value *Pointer) {
+    MDLocalMappings.push_back(
+      MDWriter.getMetadataFor(
+        ::seec::clang::LocalMapping(&TheDecl, Pointer)));
   }
 };
 
