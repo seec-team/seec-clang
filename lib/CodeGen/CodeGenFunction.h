@@ -128,6 +128,7 @@ public:
   const TargetInfo &Target;
 
   typedef std::pair<llvm::Value *, llvm::Value *> ComplexPairTy;
+  seec::MetadataInserter MDInserter;
   CGBuilderTy Builder;
 
   /// CurFuncDecl - Holds the Decl for the current outermost
@@ -1400,6 +1401,10 @@ public:
                      AggValueSlot aggSlot = AggValueSlot::ignored(),
                      bool ignoreResult = false);
 
+  RValue EmitAnyExprImpl(const Expr *E,
+                         AggValueSlot aggSlot,
+                         bool ignoreResult);
+
   // EmitVAListRef - Emit a "reference" to a va_list; this is either the address
   // or the value of the expression, depending on how va_list is defined.
   llvm::Value *EmitVAListRef(const Expr *E);
@@ -1889,6 +1894,11 @@ public:
   ///
   LValue EmitLValue(const Expr *E);
 
+  /// Implementation of EmitLValue. We move this into a separate method so that
+  /// we can easily catch the returned value in EmitLValue and insert any
+  /// metadata that SeeC needs.
+  LValue EmitLValueImpl(const Expr *E);
+
   /// \brief Same as EmitLValue but additionally we generate checking code to
   /// guard against undefined behavior.  This is only suitable when we know
   /// that the address will be used to access the object.
@@ -1948,6 +1958,7 @@ public:
   /// this method emits the address of the lvalue, then loads the result as an
   /// rvalue, returning the rvalue.
   RValue EmitLoadOfLValue(LValue V, SourceLocation Loc);
+  RValue EmitLoadOfLValueImpl(LValue V, SourceLocation Loc);
   RValue EmitLoadOfExtVectorElementLValue(LValue V);
   RValue EmitLoadOfBitfieldLValue(LValue LV);
 

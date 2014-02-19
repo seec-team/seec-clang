@@ -2006,6 +2006,8 @@ static void emitWritebackArg(CodeGenFunction &CGF, CallArgList &args,
 
 void CodeGenFunction::EmitCallArg(CallArgList &args, const Expr *E,
                                   QualType type) {
+  seec::PushStmtForScope SeeCPushE(MDInserter, E);
+
   if (const ObjCIndirectCopyRestoreExpr *CRE
         = dyn_cast<ObjCIndirectCopyRestoreExpr>(E)) {
     assert(getLangOpts().ObjCAutoRefCount);
