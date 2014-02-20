@@ -20,7 +20,7 @@
 
 #include <cassert>
 
-#define SEEC_CLANG_DEBUG 1
+#define SEEC_CLANG_DEBUG 0
 
 namespace clang {
 
@@ -37,76 +37,79 @@ private:
   ///
   class NodeRef {
     enum NodeKind { NRDecl, NRStmt };
-    
+
     NodeKind Kind;
-    
+
     union {
       ::clang::Decl const *Declaration;
-      
+
       ::clang::Stmt const *Statement;
     };
-    
+
   public:
     /// \brief Construct a NodeRef for a Decl.
     NodeRef(::clang::Decl const *D)
     : Kind(NRDecl),
       Declaration(D)
     {}
-    
+
     /// \brief Construct a NodeRef for a Stmt.
     NodeRef(::clang::Stmt const *S)
     : Kind(NRStmt),
       Statement(S)
     {}
-    
+
     /// \brief Check if this NodeRef is a Decl.
     bool isDecl() const { return Kind == NRDecl; }
-    
+
     /// \brief Check if this NodeRef is a Stmt.
     bool isStmt() const { return Kind == NRStmt; }
-    
+
     /// \brief Get the Decl from this NodeRef.
     ::clang::Decl const *getDecl() const {
       assert(Kind == NRDecl);
       return Declaration;
     }
-    
+
     /// \brief Get the Stmt from this NodeRef.
     ::clang::Stmt const *getStmt() const {
       assert(Kind == NRStmt);
       return Statement;
     }
   };
-    
+
   //----------------------------------------------------------------------------
   // Members
   //----------------------------------------------------------------------------
-  
+
   /// The llvm::Module being created.
   llvm::Module &Module;
-  
+
   /// The LLVMContext we're working with.
   llvm::LLVMContext &Context;
 
   /// Kind of metadata for pointers to Stmt.
   unsigned MDKindIDForStmtPtr;
-  
+
   /// Kind of metadata for pointers to Delc.
   unsigned MDKindIDForDeclPtr;
 
   /// Stack of the current node references.
   llvm::SmallVector<NodeRef, 32> NodeStack;
-  
+
   /// Creates metadata to describe statement mappings.
   ::seec::clang::MetadataWriter MDWriter;
-  
+
   /// Metadata for all known mappings.
   std::vector< ::llvm::MDNode * > MDStmtMappings;
-  
+
   /// Metadata for all param mappings.
   std::vector< ::llvm::MDNode * > MDParamMappings;
-  
-  
+
+  /// Metadata for all local (non-param) mappings.
+  std::vector< ::llvm::MDNode * > MDLocalMappings;
+
+
   //----------------------------------------------------------------------------
   // Methods
   //----------------------------------------------------------------------------
@@ -124,7 +127,7 @@ private:
 
     return llvm::MDNode::get(Node->getContext(), Operands);
   }
-  
+
 public:
   MetadataInserter(llvm::Module &TheModule)
   : Module(TheModule),
@@ -139,37 +142,47 @@ public:
     if (SEEC_CLANG_DEBUG)
       llvm::errs() << "MetadataInserter()\n";
   }
-  
+
   ~MetadataInserter() {
     if (SEEC_CLANG_DEBUG)
       llvm::errs() << "~MetadataInserter()\n";
-    
+
     typedef std::vector< ::llvm::MDNode * >::iterator IterTy;
-    
+
     // Add all Stmt mappings.
     llvm::NamedMDNode *GlobalStmtMapMD
       = Module.getOrInsertNamedMetadata(
         ::seec::clang::StmtMapping::getGlobalMDNameForMapping());
-    
+
     for (IterTy It = MDStmtMappings.begin(), End = MDStmtMappings.end();
          It != End; ++It) {
       GlobalStmtMapMD->addOperand(*It);
     }
-    
+
     // Add all parameter mappings.
     llvm::NamedMDNode *GlobalParamMapMD
       = Module.getOrInsertNamedMetadata(
         ::seec::clang::ParamMapping::getGlobalMDNameForMapping());
-    
+
     for (IterTy It = MDParamMappings.begin(), End = MDParamMappings.end();
          It != End; ++It) {
       GlobalParamMapMD->addOperand(*It);
     }
+
+    // Add all local (non-parameter) mappings.
+    llvm::NamedMDNode *GlobalLocalMapMD
+      = Module.getOrInsertNamedMetadata(
+        ::seec::clang::LocalMapping::getGlobalMDNameForMapping());
+
+    for (IterTy It = MDLocalMappings.begin(), End = MDLocalMappings.end();
+         It != End; ++It) {
+      GlobalLocalMapMD->addOperand(*It);
+    }
   }
-  
+
   void pushDecl(Decl const *D) {
     assert(D && "Pushing null Decl.");
-    
+
     if (SEEC_CLANG_DEBUG) {
       for (std::size_t i = 0; i < NodeStack.size(); ++i)
         llvm::outs() << " ";
@@ -178,7 +191,7 @@ public:
 
     NodeStack.push_back(NodeRef(D));
   }
-  
+
   void popDecl() {
     assert(NodeStack.size() && NodeStack.back().isDecl());
     NodeStack.pop_back();
@@ -186,7 +199,7 @@ public:
 
   void pushStmt(Stmt const *S) {
     assert(S && "Pushing null Stmt.");
-    
+
     if (SEEC_CLANG_DEBUG) {
       for (std::size_t i = 0; i < NodeStack.size(); ++i)
         llvm::outs() << " ";
@@ -204,9 +217,9 @@ public:
   void attachMetadata(llvm::Instruction *I) {
     if (NodeStack.empty())
       return;
-    
+
     NodeRef const &Node = NodeStack.back();
-    
+
     if (Node.isStmt()) {
       // Make a constant int holding the address of the Stmt.
       uintptr_t const PtrInt = reinterpret_cast<uintptr_t>(Node.getStmt());
@@ -293,7 +306,7 @@ public:
       }
     }
   }
-  
+
   /// \brief Mark a parameter Decl.
   ///
   /// \param Param The parameter's declaration.
@@ -304,6 +317,17 @@ public:
       MDWriter.getMetadataFor(
         ::seec::clang::ParamMapping(&Param, Pointer)));
   }
+  
+  /// \brief Mark a local variable Decl.
+  ///
+  /// \param TheDecl The local's declaration.
+  /// \param Address The local's address.
+  ///
+  void markLocal(VarDecl const &TheDecl, llvm::Value *Pointer) {
+    MDLocalMappings.push_back(
+      MDWriter.getMetadataFor(
+        ::seec::clang::LocalMapping(&TheDecl, Pointer)));
+  }
 };
 
 /// \brief Convenience class that pushes a Stmt for the object's lifetime.
@@ -311,7 +335,7 @@ public:
 class PushStmtForScope {
 private:
   MetadataInserter &MDInserter;
-  
+
   bool const Pushed;
 
   PushStmtForScope(PushStmtForScope const &Other);
