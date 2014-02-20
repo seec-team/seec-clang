@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -analyze -analyzer-checker=core,osx.cocoa.NonNilReturnValue,osx.cocoa.NilArg -verify -Wno-objc-root-class %s
+// RUN: %clang_cc1 -analyze -analyzer-checker=core,osx.cocoa.NonNilReturnValue,osx.cocoa.NilArg,osx.cocoa.Loops -verify -Wno-objc-root-class %s
 typedef unsigned long NSUInteger;
 typedef signed char BOOL;
 typedef struct _NSZone NSZone;
@@ -14,8 +14,6 @@ typedef struct _NSZone NSZone;
 @protocol NSCoding
 - (void)encodeWithCoder:(NSCoder *)aCoder;
 @end
-@protocol NSFastEnumeration
-@end
 @protocol NSSecureCoding <NSCoding>
 @required
 + (BOOL)supportsSecureCoding;
@@ -24,11 +22,20 @@ typedef struct _NSZone NSZone;
 - (id)init;
 + (id)alloc;
 @end
-@interface NSArray : NSObject <NSCopying, NSMutableCopying, NSSecureCoding, NSFastEnumeration>
 
+typedef struct {
+  unsigned long state;
+  id *itemsPtr;
+  unsigned long *mutationsPtr;
+  unsigned long extra[5];
+} NSFastEnumerationState;
+@protocol NSFastEnumeration
+- (NSUInteger)countByEnumeratingWithState:(NSFastEnumerationState *)state objects:(id [])buffer count:(NSUInteger)len;
+@end
+
+@interface NSArray : NSObject <NSCopying, NSMutableCopying, NSSecureCoding, NSFastEnumeration>
 - (NSUInteger)count;
 - (id)objectAtIndex:(NSUInteger)index;
-
 @end
 
 @interface NSArray (NSExtendedArray)
@@ -81,6 +88,12 @@ typedef struct _NSZone NSZone;
 - (void)setDictionary:(NSDictionary *)otherDictionary;
 - (void)setObject:(id)obj forKeyedSubscript:(id <NSCopying>)key __attribute__((availability(macosx,introduced=10.8)));
 
+@end
+
+@interface NSOrderedSet : NSObject <NSFastEnumeration>
+@end
+@interface NSOrderedSet (NSOrderedSetCreation)
+- (NSUInteger)count;
 @end
 
 @interface NSString : NSObject <NSCopying, NSMutableCopying, NSSecureCoding>
@@ -243,4 +256,23 @@ void testAssumeNSNullNullReturnsNonNil(NSMutableDictionary *Table, id Object,
   }
 }
 
+void testCollectionIsNotEmptyWhenCountIsGreaterThanZero(NSMutableDictionary *D){
+  if ([D count] > 0) { // Count is greater than zero.
+    NSString *s = 0;
+    for (NSString *key in D) {
+      s = key;       // Loop is always entered.
+    }
+    [D removeObjectForKey:s]; // no warning
+  }
+}
+
+void testCountAwareNSOrderedSet(NSOrderedSet *containers, int *validptr) {
+	int *x = 0;
+  NSUInteger containerCount = [containers count];
+  if (containerCount > 0)    
+		x = validptr;
+	for (id c in containers) {
+		*x = 1; // no warning
+	}
+}
 

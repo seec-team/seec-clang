@@ -97,6 +97,11 @@ public:
     ///
     /// Optionally override to do per translation unit tasks.
     virtual void onStartOfTranslationUnit() {}
+
+    /// \brief Called at the end of each translation unit.
+    ///
+    /// Optionally override to do per translation unit tasks.
+    virtual void onEndOfTranslationUnit() {}
   };
 
   /// \brief Called when parsing is finished. Intended for testing only.
@@ -158,6 +163,9 @@ public:
              ASTContext &Context);
   /// @}
 
+  /// \brief Finds all matches in the given AST.
+  void matchAST(ASTContext &Context);
+
   /// \brief Registers a callback to notify the end of parsing.
   ///
   /// The provided closure is called after parsing is done, before the AST is
@@ -168,7 +176,7 @@ public:
 private:
   /// \brief For each \c DynTypedMatcher a \c MatchCallback that will be called
   /// when it matches.
-  std::vector<std::pair<const internal::DynTypedMatcher*, MatchCallback*> >
+  std::vector<std::pair<internal::DynTypedMatcher, MatchCallback *> >
     MatcherCallbackPairs;
 
   /// \brief Called when parsing is done.

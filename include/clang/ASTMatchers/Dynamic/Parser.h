@@ -18,9 +18,12 @@
 ///
 /// \code
 /// Grammar for the expressions supported:
-/// <Expression>        := <StringLiteral> | <MatcherExpression>
+/// <Expression>        := <Literal> | <MatcherExpression>
+/// <Literal>           := <StringLiteral> | <Unsigned>
 /// <StringLiteral>     := "quoted string"
-/// <MatcherExpression> := <MatcherName>(<ArgumentList>)
+/// <Unsigned>          := [0-9]+
+/// <MatcherExpression> := <MatcherName>(<ArgumentList>) |
+///                        <MatcherName>(<ArgumentList>).bind(<StringLiteral>)
 /// <MatcherName>       := [a-zA-Z]+
 /// <ArgumentList>      := <Expression> | <Expression>,<ArgumentList>
 /// \endcode
@@ -34,6 +37,7 @@
 #include "clang/ASTMatchers/Dynamic/VariantValue.h"
 #include "clang/Basic/LLVM.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringRef.h"
 
 namespace clang {
@@ -66,15 +70,19 @@ public:
     /// \param NameRange The location of the name in the matcher source.
     ///   Useful for error reporting.
     ///
+    /// \param BindID The ID to use to bind the matcher, or a null \c StringRef
+    ///   if no ID is specified.
+    ///
     /// \param Args The argument list for the matcher.
     ///
-    /// \return The matcher object constructed by the processor, or NULL
-    ///   if an error occurred. In that case, \c Error will contain a
+    /// \return The matcher objects constructed by the processor, or a null
+    ///   matcher if an error occurred. In that case, \c Error will contain a
     ///   description of the error.
-    ///   The caller takes ownership of the DynTypedMatcher object returned.
-    virtual DynTypedMatcher *
-    actOnMatcherExpression(StringRef MatcherName, const SourceRange &NameRange,
-                           ArrayRef<ParserValue> Args, Diagnostics *Error) = 0;
+    virtual VariantMatcher actOnMatcherExpression(StringRef MatcherName,
+                                                  const SourceRange &NameRange,
+                                                  StringRef BindID,
+                                                  ArrayRef<ParserValue> Args,
+                                                  Diagnostics *Error) = 0;
   };
 
   /// \brief Parse a matcher expression, creating matchers from the registry.
@@ -85,11 +93,12 @@ public:
   ///
   /// \param MatcherCode The matcher expression to parse.
   ///
-  /// \return The matcher object constructed, or NULL if an error occurred.
-  //    In that case, \c Error will contain a description of the error.
+  /// \return The matcher object constructed, or an empty Optional if an error
+  ///   occurred.
+  ///   In that case, \c Error will contain a description of the error.
   ///   The caller takes ownership of the DynTypedMatcher object returned.
-  static DynTypedMatcher *parseMatcherExpression(StringRef MatcherCode,
-                                                 Diagnostics *Error);
+  static llvm::Optional<DynTypedMatcher>
+  parseMatcherExpression(StringRef MatcherCode, Diagnostics *Error);
 
   /// \brief Parse a matcher expression.
   ///
@@ -97,13 +106,12 @@ public:
   ///
   /// \param S The Sema instance that will help the parser
   ///   construct the matchers.
-  /// \return The matcher object constructed by the processor, or NULL
-  ///   if an error occurred. In that case, \c Error will contain a
+  /// \return The matcher object constructed by the processor, or an empty
+  ///   Optional if an error occurred. In that case, \c Error will contain a
   ///   description of the error.
   ///   The caller takes ownership of the DynTypedMatcher object returned.
-  static DynTypedMatcher *parseMatcherExpression(StringRef MatcherCode,
-                                                 Sema *S,
-                                                 Diagnostics *Error);
+  static llvm::Optional<DynTypedMatcher>
+  parseMatcherExpression(StringRef MatcherCode, Sema *S, Diagnostics *Error);
 
   /// \brief Parse an expression, creating matchers from the registry.
   ///

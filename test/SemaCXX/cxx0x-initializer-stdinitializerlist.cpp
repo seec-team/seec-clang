@@ -144,7 +144,7 @@ namespace PR12119 {
   template<typename T> void g(std::initializer_list<std::initializer_list<T>>);
 
   void foo() {
-    f({0, {1}});
+    f({0, {1}}); // expected-warning{{braces around scalar initializer}}
     g({{0, 1}, {2, 3}});
     std::initializer_list<int> il = {1, 2};
     g({il, {2, 3}});
@@ -217,4 +217,16 @@ namespace deleted_copy {
   };
 
   std::initializer_list<X> x{1}; // expected-error {{invokes deleted constructor}}
+}
+
+namespace RefVersusInitList {
+  struct S {};
+  void f(const S &) = delete;
+  void f(std::initializer_list<S>);
+  void g(S s) { f({S()}); }
+}
+
+namespace PR18013 {
+  int f();
+  std::initializer_list<long (*)()> x = {f}; // expected-error {{cannot initialize an array element of type 'long (*const)()' with an lvalue of type 'int ()': different return type ('long' vs 'int')}}
 }

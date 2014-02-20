@@ -698,7 +698,9 @@ static void PrintCursor(CXCursor Cursor,
       printf(" (pure)");
     if (clang_Cursor_isVariadic(Cursor))
       printf(" (variadic)");
-    
+    if (clang_Cursor_isObjCOptional(Cursor))
+      printf(" (@optional)");
+
     if (Cursor.kind == CXCursor_IBOutletCollectionAttr) {
       CXType T =
         clang_getCanonicalType(clang_getIBOutletCollectionType(Cursor));
@@ -1158,6 +1160,7 @@ static enum CXChildVisitResult PrintType(CXCursor cursor, CXCursor p,
                                          CXClientData d) {
   if (!clang_isInvalid(clang_getCursorKind(cursor))) {
     CXType T = clang_getCursorType(cursor);
+    enum CXRefQualifierKind RQ = clang_Type_getCXXRefQualifier(T);
     PrintCursor(cursor, NULL);
     PrintTypeAndTypeKind(T, " [type=%s] [typekind=%s]");
     if (clang_isConstQualifiedType(T))
@@ -1166,6 +1169,10 @@ static enum CXChildVisitResult PrintType(CXCursor cursor, CXCursor p,
       printf(" volatile");
     if (clang_isRestrictQualifiedType(T))
       printf(" restrict");
+    if (RQ == CXRefQualifier_LValue)
+      printf(" lvalue-ref-qualifier");
+    if (RQ == CXRefQualifier_RValue)
+      printf(" rvalue-ref-qualifier");
     /* Print the canonical type if it is different. */
     {
       CXType CT = clang_getCanonicalType(T);

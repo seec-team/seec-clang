@@ -34,6 +34,8 @@ def parse(dr):
 status_re = re.compile(r'\bdr([0-9]+): (.*)')
 status_map = {}
 for test_cpp in os.listdir(dr_test_dir):
+  if not test_cpp.endswith('.cpp'):
+    continue
   test_cpp = os.path.join(dr_test_dir, test_cpp)
   found_any = False;
   for match in re.finditer(status_re, file(test_cpp, 'r').read()):
@@ -92,6 +94,10 @@ print >> out_file, '''\
 
 def availability(issue):
   status = status_map.get(issue, 'unknown')
+  avail_suffix = ''
+  if status.endswith(' c++11'):
+    status = status[:-6]
+    avail_suffix = ' (C++11 onwards)'
   if status == 'unknown':
     avail = 'Unknown'
     avail_style = ' class="none"'
@@ -114,17 +120,22 @@ def availability(issue):
     avail = 'N/A'
     avail_style = ' class="na"'
   elif status.startswith('sup '):
-    dup = int(status.split(' ', 1)[1])
+    dup = status.split(' ', 1)[1]
     avail = 'Superseded by %s' % dup
-    _, avail_style = availability(dup)
+    try:
+      _, avail_style = availability(int(dup))
+    except:
+      print >>sys.stderr, "issue %s marked as sup %s" % (issue, dup)
+      avail_style = ' class="none"'
   elif status.startswith('dup '):
     dup = int(status.split(' ', 1)[1])
     avail = 'Duplicate of %s' % dup
     _, avail_style = availability(dup)
   else:
     assert False, 'unknown status %s for issue %s' % (status, dr.issue)
-  return (avail, avail_style)
+  return (avail + avail_suffix, avail_style)
 
+count = {}
 for dr in drs:
   if dr.status in ('concepts',):
     # Yeah, cool story bro.
@@ -138,6 +149,8 @@ for dr in drs:
   else:
     row_style = ''
     avail, avail_style = availability(dr.issue)
+    if not avail.startswith('Sup') and not avail.startswith('Dup'):
+      count[avail] = count.get(avail, 0) + 1
 
   print >> out_file, '''\
   <tr%s>
@@ -147,6 +160,9 @@ for dr in drs:
     <td%s align="center">%s</td>
   </tr>''' % (row_style, dr.url, dr.issue, dr.status, dr.title, avail_style,
               avail)
+
+for status, num in count.items():
+  print "%s: %s" % (status, num)
 
 print >> out_file, '''\
 </table>
