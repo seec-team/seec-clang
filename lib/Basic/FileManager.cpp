@@ -352,6 +352,9 @@ const FileEntry *FileManager::getFile(StringRef Filename, bool openFile,
                  ? 0 : NamedFileEnt.getValue();
 
   ++NumFileCacheMisses;
+  
+  if (DisableNonVirtualFiles)
+    return 0;
 
   if (DisableNonVirtualFiles)
     return 0;

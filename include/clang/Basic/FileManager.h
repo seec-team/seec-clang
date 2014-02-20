@@ -136,6 +136,8 @@ class FileManager : public RefCountedBase<FileManager> {
   SmallVector<DirectoryEntry*, 4> VirtualDirectoryEntries;
   /// \brief The virtual files that we have allocated.
   SmallVector<FileEntry*, 4> VirtualFileEntries;
+  
+  bool DisableNonVirtualFiles;
 
   bool DisableNonVirtualFiles;
 

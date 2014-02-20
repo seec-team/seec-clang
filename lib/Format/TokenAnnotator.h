@@ -45,6 +45,7 @@ enum TokenType {
   TT_ObjCMethodSpecifier,
   TT_ObjCProperty,
   TT_ObjCSelectorName,
+  TT_OverloadedOperator,
   TT_OverloadedOperatorLParen,
   TT_PointerOrReference,
   TT_PureVirtualSpecifier,
@@ -74,10 +75,11 @@ public:
       : FormatTok(FormatTok), Type(TT_Unknown), SpacesRequiredBefore(0),
         CanBreakBefore(false), MustBreakBefore(false),
         ClosesTemplateDeclaration(false), MatchingParen(NULL),
-        ParameterCount(0), BindingStrength(0), SplitPenalty(0),
-        LongestObjCSelectorName(0), Parent(NULL),
+        ParameterCount(0), TotalLength(FormatTok.TokenLength),
+        UnbreakableTailLength(0), BindingStrength(0), SplitPenalty(0),
+        LongestObjCSelectorName(0), DefinesFunctionType(false), Parent(NULL),
         FakeRParens(0), LastInChainOfCalls(false),
-        PartOfMultiVariableDeclStmt(false), NoMoreTokensOnLevel(false) {}
+        PartOfMultiVariableDeclStmt(false) {}
 
   bool is(tok::TokenKind Kind) const { return FormatTok.Tok.is(Kind); }
 
@@ -152,6 +154,10 @@ public:
   /// \brief The total length of the line up to and including this token.
   unsigned TotalLength;
 
+  /// \brief The length of following tokens until the next natural split point,
+  /// or the next token that can be broken.
+  unsigned UnbreakableTailLength;
+
   // FIXME: Come up with a 'cleaner' concept.
   /// \brief The binding strength of a token. This is a combined value of
   /// operator precedence, parenthesis nesting, etc.
@@ -163,6 +169,9 @@ public:
   /// \brief If this is the first ObjC selector name in an ObjC method
   /// definition or call, this contains the length of the longest name.
   unsigned LongestObjCSelectorName;
+
+  /// \brief \c true if this is a "(" that starts a function type definition.
+  bool DefinesFunctionType;
 
   std::vector<AnnotatedToken> Children;
   AnnotatedToken *Parent;
@@ -183,19 +192,6 @@ public:
   ///
   /// Only set if \c Type == \c TT_StartOfName.
   bool PartOfMultiVariableDeclStmt;
-
-  /// \brief Set to \c true for "("-tokens if this is the last token other than
-  /// ")" in the next higher parenthesis level.
-  ///
-  /// If this is \c true, no more formatting decisions have to be made on the
-  /// next higher parenthesis level, enabling optimizations.
-  ///
-  /// Example:
-  /// \code
-  /// aaaaaa(aaaaaa());
-  ///              ^  // Set to true for this parenthesis.
-  /// \endcode
-  bool NoMoreTokensOnLevel;
 
   /// \brief Returns the previous token ignoring comments.
   AnnotatedToken *getPreviousNoneComment() const;
@@ -276,6 +272,8 @@ private:
   bool canBreakBefore(const AnnotatedLine &Line, const AnnotatedToken &Right);
 
   void printDebugInfo(const AnnotatedLine &Line);
+
+  void calculateUnbreakableTailLengths(AnnotatedLine &Line);
 
   const FormatStyle &Style;
   SourceManager &SourceMgr;

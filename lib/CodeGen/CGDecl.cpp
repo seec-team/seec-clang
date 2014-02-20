@@ -32,7 +32,7 @@ using namespace CodeGen;
 
 void CodeGenFunction::EmitDecl(const Decl &D) {
   seec::PushDeclForScope X(MDInserter, &D);
-
+  
   switch (D.getKind()) {
   case Decl::TranslationUnit:
   case Decl::Namespace:
@@ -74,15 +74,13 @@ void CodeGenFunction::EmitDecl(const Decl &D) {
   case Decl::Block:
   case Decl::Captured:
   case Decl::ClassScopeFunctionSpecialization:
+  case Decl::UsingShadow:
     llvm_unreachable("Declaration should not be in declstmts!");
   case Decl::Function:  // void X();
   case Decl::Record:    // struct/union/class X;
   case Decl::Enum:      // enum X;
   case Decl::EnumConstant: // enum ? { X = ? }
   case Decl::CXXRecord: // struct/union/class X; [C++]
-  case Decl::Using:          // using X; [C++]
-  case Decl::UsingShadow:
-  case Decl::NamespaceAlias:
   case Decl::StaticAssert: // static_assert(X, ""); [C++0x]
   case Decl::Label:        // __label__ x;
   case Decl::Import:
@@ -91,6 +89,14 @@ void CodeGenFunction::EmitDecl(const Decl &D) {
     // None of these decls require codegen support.
     return;
 
+  case Decl::NamespaceAlias:
+    if (CGDebugInfo *DI = getDebugInfo())
+        DI->EmitNamespaceAlias(cast<NamespaceAliasDecl>(D));
+    return;
+  case Decl::Using:          // using X; [C++]
+    if (CGDebugInfo *DI = getDebugInfo())
+        DI->EmitUsingDecl(cast<UsingDecl>(D));
+    return;
   case Decl::UsingDirective: // using namespace X; [C++]
     if (CGDebugInfo *DI = getDebugInfo())
       DI->EmitUsingDirective(cast<UsingDirectiveDecl>(D));
@@ -116,12 +122,7 @@ void CodeGenFunction::EmitDecl(const Decl &D) {
 /// EmitVarDecl - This method handles emission of any variable declaration
 /// inside a function, including static vars etc.
 void CodeGenFunction::EmitVarDecl(const VarDecl &D) {
-  switch (D.getStorageClass()) {
-  case SC_None:
-  case SC_Auto:
-  case SC_Register:
-    return EmitAutoVarDecl(D);
-  case SC_Static: {
+  if (D.isStaticLocal()) {
     llvm::GlobalValue::LinkageTypes Linkage =
       llvm::GlobalValue::InternalLinkage;
 
@@ -136,15 +137,16 @@ void CodeGenFunction::EmitVarDecl(const VarDecl &D) {
 
     return EmitStaticVarDecl(D, Linkage);
   }
-  case SC_Extern:
-  case SC_PrivateExtern:
+
+  if (D.hasExternalStorage())
     // Don't emit it now, allow it to be emitted lazily on its first use.
     return;
-  case SC_OpenCLWorkGroupLocal:
-    return CGM.getOpenCLRuntime().EmitWorkGroupLocalVarDecl(*this, D);
-  }
 
-  llvm_unreachable("Unknown storage class");
+  if (D.getStorageClass() == SC_OpenCLWorkGroupLocal)
+    return CGM.getOpenCLRuntime().EmitWorkGroupLocalVarDecl(*this, D);
+
+  assert(D.hasLocalStorage());
+  return EmitAutoVarDecl(D);
 }
 
 static std::string GetStaticDeclName(CodeGenFunction &CGF, const VarDecl &D,
@@ -305,8 +307,6 @@ void CodeGenFunction::EmitStaticVarDecl(const VarDecl &D,
   // circular references.
   DMEntry = addr;
   CGM.setStaticLocalDeclAddress(&D, addr);
-
-  MDInserter.markLocal(D, addr);
 
   // We can't have a VLA here, but we can have a pointer to a VLA,
   // even though that doesn't really make any sense.
@@ -962,8 +962,6 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
   DMEntry = DeclPtr;
   emission.Address = DeclPtr;
 
-  MDInserter.markLocal(D, DeclPtr);
-
   // Emit debug info for local var declaration.
   if (HaveInsertPoint())
     if (CGDebugInfo *DI = getDebugInfo()) {
@@ -1058,7 +1056,7 @@ void CodeGenFunction::EmitAutoVarInit(const AutoVarEmission &emission) {
 
   // If this local has an initializer, emit it now.
   const Expr *Init = D.getInit();
-
+  
   seec::PushStmtForScope SeeCPush(MDInserter, Init);
 
   // If we are at an unreachable point, we don't need to emit the initializer
@@ -1695,7 +1693,7 @@ void CodeGenFunction::EmitParmDecl(const VarDecl &D, llvm::Value *Arg,
   llvm::Value *&DMEntry = LocalDeclMap[&D];
   assert(DMEntry == 0 && "Decl already exists in localdeclmap!");
   DMEntry = DeclPtr;
-
+  
   MDInserter.markParameter(D, DeclPtr);
 
   // Emit debug info for param declaration.

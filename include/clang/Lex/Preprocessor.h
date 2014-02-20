@@ -828,6 +828,13 @@ public:
       AnnotatePreviousCachedTokens(Tok);
   }
 
+  /// Get the location of the last cached token, suitable for setting the end
+  /// location of an annotation token.
+  SourceLocation getLastCachedTokenLocation() const {
+    assert(CachedLexPos != 0);
+    return CachedTokens[CachedLexPos-1].getLocation();
+  }
+
   /// \brief Replace the last token with an annotation token.
   ///
   /// Like AnnotateCachedTokens(), this routine replaces an
@@ -1400,7 +1407,7 @@ private:
   bool InCachingLexMode() const {
     // If the Lexer pointers are 0 and IncludeMacroStack is empty, it means
     // that we are past EOF, not that we are in CachingLex mode.
-    return CurPPLexer == 0 && CurTokenLexer == 0 && CurPTHLexer == 0 &&
+    return !CurPPLexer && !CurTokenLexer && !CurPTHLexer &&
            !IncludeMacroStack.empty();
   }
   void EnterCachingLexMode();

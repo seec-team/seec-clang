@@ -377,12 +377,6 @@ bool PCHValidator::ReadPreprocessorOptions(const PreprocessorOptions &PPOpts,
                                   PP.getLangOpts());
 }
 
-void PCHValidator::ReadHeaderFileInfo(const HeaderFileInfo &HFI,
-                                      unsigned ID) {
-  PP.getHeaderSearchInfo().setHeaderFileInfoForUID(HFI, ID);
-  ++NumHeaderInfos;
-}
-
 void PCHValidator::ReadCounter(const ModuleFile &M, unsigned Value) {
   PP.setCounterValue(Value);
 }
@@ -765,6 +759,10 @@ bool ASTReader::ReadDeclContextStorage(ModuleFile &M,
 
 void ASTReader::Error(StringRef Msg) {
   Error(diag::err_fe_pch_malformed, Msg);
+  if (Context.getLangOpts().Modules && !Diags.isDiagnosticInFlight()) {
+    Diag(diag::note_module_cache_path)
+      << PP.getHeaderSearchInfo().getModuleCachePath();
+  }
 }
 
 void ASTReader::Error(unsigned DiagID,
@@ -1721,6 +1719,10 @@ InputFile ASTReader::getInputFile(ModuleFile &F, unsigned ID, bool Complain) {
          )) {
       if (Complain) {
         Error(diag::err_fe_pch_file_modified, Filename, F.FileName);
+        if (Context.getLangOpts().Modules && !Diags.isDiagnosticInFlight()) {
+          Diag(diag::note_module_cache_path)
+            << PP.getHeaderSearchInfo().getModuleCachePath();
+        }
       }
 
       IsOutOfDate = true;
@@ -4394,11 +4396,8 @@ namespace {
 HeaderFileInfo ASTReader::GetHeaderFileInfo(const FileEntry *FE) {
   HeaderFileInfoVisitor Visitor(FE);
   ModuleMgr.visit(&HeaderFileInfoVisitor::visit, &Visitor);
-  if (Optional<HeaderFileInfo> HFI = Visitor.getHeaderFileInfo()) {
-    if (Listener)
-      Listener->ReadHeaderFileInfo(*HFI, FE->getUID());
+  if (Optional<HeaderFileInfo> HFI = Visitor.getHeaderFileInfo())
     return *HFI;
-  }
   
   return HeaderFileInfo();
 }

@@ -580,7 +580,12 @@ public:
   /// preprocessor is not available.
   comments::FullComment *getCommentForDecl(const Decl *D,
                                            const Preprocessor *PP) const;
-  
+
+  /// Return parsed documentation comment attached to a given declaration.
+  /// Returns NULL if no comment is attached. Does not look at any
+  /// redeclarations of the declaration.
+  comments::FullComment *getLocalCommentForDeclUncached(const Decl *D) const;
+
   comments::FullComment *cloneFullComment(comments::FullComment *FC,
                                          const Decl *D) const;
 
@@ -740,7 +745,8 @@ public:
   CanQualType VoidTy;
   CanQualType BoolTy;
   CanQualType CharTy;
-  CanQualType WCharTy;  // [C++ 3.9.1p5], integer type in C99.
+  CanQualType WCharTy;  // [C++ 3.9.1p5].
+  CanQualType WideCharTy; // Same as WCharTy in C++, integer type in C99.
   CanQualType WIntTy;   // [C99 7.24.1], integer type unchanged by default promotions.
   CanQualType Char16Ty; // [C++0x 3.9.1p5], integer type in C99.
   CanQualType Char32Ty; // [C++0x 3.9.1p5], integer type in C99.
@@ -1130,10 +1136,14 @@ public:
   /// <stdint.h>.
   CanQualType getUIntMaxType() const;
 
-  /// \brief In C++, this returns the unique wchar_t type.  In C99, this
-  /// returns a type compatible with the type defined in <stddef.h> as defined
-  /// by the target.
+  /// \brief Return the unique wchar_t type available in C++ (and available as
+  /// __wchar_t as a Microsoft extension).
   QualType getWCharType() const { return WCharTy; }
+
+  /// \brief Return the type of wide characters. In C++, this returns the
+  /// unique wchar_t type. In C99, this returns a type compatible with the type
+  /// defined in <stddef.h> as defined by the target.
+  QualType getWideCharType() const { return WideCharTy; }
 
   /// \brief Return the type of "signed wchar_t".
   ///
