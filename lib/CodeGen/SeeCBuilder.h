@@ -47,7 +47,7 @@ private:
   /// Kind of metadata for pointers to Stmt.
   unsigned MDKindIDForStmtPtr;
 
-  /// Kind of metadata for pointers to Delc.
+  /// Kind of metadata for pointers to Decl.
   unsigned MDKindIDForDeclPtr;
 
   /// Stack of the current node references.
