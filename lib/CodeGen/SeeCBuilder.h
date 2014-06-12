@@ -12,6 +12,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include "clang/AST/ASTTypeTraits.h"
 #include "clang/AST/Stmt.h"
 #include "clang/AST/Expr.h"
 #include "clang/CodeGen/SeeCMapping.h"
@@ -33,51 +34,6 @@ namespace seec {
 class MetadataInserter
 {
 private:
-  /// \brief A reference to a single Stmt or Decl.
-  ///
-  class NodeRef {
-    enum NodeKind { NRDecl, NRStmt };
-
-    NodeKind Kind;
-
-    union {
-      ::clang::Decl const *Declaration;
-
-      ::clang::Stmt const *Statement;
-    };
-
-  public:
-    /// \brief Construct a NodeRef for a Decl.
-    NodeRef(::clang::Decl const *D)
-    : Kind(NRDecl),
-      Declaration(D)
-    {}
-
-    /// \brief Construct a NodeRef for a Stmt.
-    NodeRef(::clang::Stmt const *S)
-    : Kind(NRStmt),
-      Statement(S)
-    {}
-
-    /// \brief Check if this NodeRef is a Decl.
-    bool isDecl() const { return Kind == NRDecl; }
-
-    /// \brief Check if this NodeRef is a Stmt.
-    bool isStmt() const { return Kind == NRStmt; }
-
-    /// \brief Get the Decl from this NodeRef.
-    ::clang::Decl const *getDecl() const {
-      assert(Kind == NRDecl);
-      return Declaration;
-    }
-
-    /// \brief Get the Stmt from this NodeRef.
-    ::clang::Stmt const *getStmt() const {
-      assert(Kind == NRStmt);
-      return Statement;
-    }
-  };
-
   //----------------------------------------------------------------------------
   // Members
   //----------------------------------------------------------------------------
@@ -95,7 +51,7 @@ private:
   unsigned MDKindIDForDeclPtr;
 
   /// Stack of the current node references.
-  llvm::SmallVector<NodeRef, 32> NodeStack;
+  llvm::SmallVector<ast_type_traits::DynTypedNode, 32> NodeStack;
 
   /// Creates metadata to describe statement mappings.
   ::seec::clang::MetadataWriter MDWriter;
@@ -189,11 +145,11 @@ public:
       llvm::outs() << "Decl " << D->getDeclKindName() << "\n";
     }
 
-    NodeStack.push_back(NodeRef(D));
+    NodeStack.push_back(ast_type_traits::DynTypedNode::create(*D));
   }
 
   void popDecl() {
-    assert(NodeStack.size() && NodeStack.back().isDecl());
+    assert(NodeStack.size() && NodeStack.back().get<clang::Decl>());
     NodeStack.pop_back();
   }
 
@@ -206,11 +162,11 @@ public:
       llvm::outs() << "Stmt " << S->getStmtClassName() << "\n";
     }
 
-    NodeStack.push_back(NodeRef(S));
+    NodeStack.push_back(ast_type_traits::DynTypedNode::create(*S));
   }
 
   void popStmt() {
-    assert(NodeStack.size() && NodeStack.back().isStmt());
+    assert(NodeStack.size() && NodeStack.back().get<clang::Stmt>());
     NodeStack.pop_back();
   }
 
@@ -218,18 +174,18 @@ public:
     if (NodeStack.empty())
       return;
 
-    NodeRef const &Node = NodeStack.back();
+    auto const &Node = NodeStack.back();
 
-    if (Node.isStmt()) {
+    if (auto const Stmt = Node.get<clang::Stmt>()) {
       // Make a constant int holding the address of the Stmt.
-      uintptr_t const PtrInt = reinterpret_cast<uintptr_t>(Node.getStmt());
+      auto const PtrInt = reinterpret_cast<uintptr_t const>(Stmt);
       llvm::Type *i64 = llvm::Type::getInt64Ty(Context);
       llvm::Value *StmtAddr = llvm::ConstantInt::get(i64, PtrInt);
       I->setMetadata(MDKindIDForStmtPtr, llvm::MDNode::get(Context, StmtAddr));
     }
-    else if (Node.isDecl()) {
+    else if (auto const Decl = Node.get<clang::Decl>()) {
       // Make a constant int holding the address of the Decl.
-      uintptr_t const PtrInt = reinterpret_cast<uintptr_t>(Node.getDecl());
+      auto const PtrInt = reinterpret_cast<uintptr_t const>(Decl);
       llvm::Type *i64 = llvm::Type::getInt64Ty(Context);
       llvm::Value *DeclAddr = llvm::ConstantInt::get(i64, PtrInt);
       I->setMetadata(MDKindIDForDeclPtr, llvm::MDNode::get(Context, DeclAddr));
