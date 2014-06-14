@@ -50,6 +50,12 @@ private:
   /// Kind of metadata for pointers to Decl.
   unsigned MDKindIDForDeclPtr;
 
+  /// Kind of metadata for Stmt completion pointers.
+  unsigned MDKindIDForStmtCompletionPtrs;
+
+  /// Kind of metadata for Decl completion pointers.
+  unsigned MDKindIDForDeclCompletionPtrs;
+
   /// Stack of the current node references.
   llvm::SmallVector<ast_type_traits::DynTypedNode, 32> NodeStack;
 
@@ -65,23 +71,42 @@ private:
   /// Metadata for all local (non-param) mappings.
   std::vector< ::llvm::MDNode * > MDLocalMappings;
 
+  /// Most recently seen llvm::Instruction.
+  llvm::Instruction *MostRecentInstruction;
 
   //----------------------------------------------------------------------------
   // Methods
   //----------------------------------------------------------------------------
 
   /// \brief Get a new MDNode, which has all the operands of Node, plus Value.
-  static llvm::MDNode *addOperand(llvm::MDNode *Node, llvm::Value *Value) {
+  ///
+  llvm::MDNode *addOperand(llvm::MDNode *Node, llvm::Value *Value) {
     llvm::SmallVector<llvm::Value *, 8> Operands;
 
-    unsigned NumOperands = Node->getNumOperands();
+    if (Node) {
+      unsigned const NumOperands = Node->getNumOperands();
 
-    for (unsigned i = 0; i < NumOperands; ++i)
-      Operands.push_back(Node->getOperand(i));
+      for (unsigned i = 0; i < NumOperands; ++i)
+        Operands.push_back(Node->getOperand(i));
+    }
 
     Operands.push_back(Value);
 
-    return llvm::MDNode::get(Node->getContext(), Operands);
+    return llvm::MDNode::get(Context, Operands);
+  }
+
+  /// \brief Create an llvm::Value holding the address of the given Decl.
+  ///
+  llvm::Value *makeDeclNode(clang::Decl const *Decl) {
+    return llvm::ConstantInt::get(llvm::Type::getInt64Ty(Context),
+                                  reinterpret_cast<uintptr_t const>(Decl));
+  }
+
+  /// \brief Create an llvm::Value holding the address of the given Stmt.
+  ///
+  llvm::Value *makeStmtNode(clang::Stmt const *Stmt) {
+    return llvm::ConstantInt::get(llvm::Type::getInt64Ty(Context),
+                                  reinterpret_cast<uintptr_t const>(Stmt));
   }
 
 public:
@@ -90,10 +115,15 @@ public:
     Context(Module.getContext()),
     MDKindIDForStmtPtr(Context.getMDKindID("seec.clang.stmt.ptr")),
     MDKindIDForDeclPtr(Context.getMDKindID("seec.clang.decl.ptr")),
+    MDKindIDForStmtCompletionPtrs(
+      Context.getMDKindID("seec.clang.stmt.completion.ptrs")),
+    MDKindIDForDeclCompletionPtrs(
+      Context.getMDKindID("seec.clang.decl.completion.ptrs")),
     NodeStack(),
     MDWriter(Context),
     MDStmtMappings(),
-    MDParamMappings()
+    MDParamMappings(),
+    MostRecentInstruction(nullptr)
   {
     if (SEEC_CLANG_DEBUG)
       llvm::errs() << "MetadataInserter()\n";
@@ -150,6 +180,14 @@ public:
 
   void popDecl() {
     assert(NodeStack.size() && NodeStack.back().get<clang::Decl>());
+
+    if (auto const I = MostRecentInstruction) {
+      auto const Decl = NodeStack.back().get<clang::Decl>();
+      I->setMetadata(MDKindIDForDeclCompletionPtrs,
+                     addOperand(I->getMetadata(MDKindIDForDeclCompletionPtrs),
+                                makeDeclNode(Decl)));
+    }
+
     NodeStack.pop_back();
   }
 
@@ -167,6 +205,14 @@ public:
 
   void popStmt() {
     assert(NodeStack.size() && NodeStack.back().get<clang::Stmt>());
+
+    if (auto const I = MostRecentInstruction) {
+      auto const Stmt = NodeStack.back().get<clang::Stmt>();
+      I->setMetadata(MDKindIDForStmtCompletionPtrs,
+                     addOperand(I->getMetadata(MDKindIDForStmtCompletionPtrs),
+                                makeStmtNode(Stmt)));
+    }
+
     NodeStack.pop_back();
   }
 
@@ -176,20 +222,14 @@ public:
 
     auto const &Node = NodeStack.back();
 
-    if (auto const Stmt = Node.get<clang::Stmt>()) {
-      // Make a constant int holding the address of the Stmt.
-      auto const PtrInt = reinterpret_cast<uintptr_t const>(Stmt);
-      llvm::Type *i64 = llvm::Type::getInt64Ty(Context);
-      llvm::Value *StmtAddr = llvm::ConstantInt::get(i64, PtrInt);
-      I->setMetadata(MDKindIDForStmtPtr, llvm::MDNode::get(Context, StmtAddr));
-    }
-    else if (auto const Decl = Node.get<clang::Decl>()) {
-      // Make a constant int holding the address of the Decl.
-      auto const PtrInt = reinterpret_cast<uintptr_t const>(Decl);
-      llvm::Type *i64 = llvm::Type::getInt64Ty(Context);
-      llvm::Value *DeclAddr = llvm::ConstantInt::get(i64, PtrInt);
-      I->setMetadata(MDKindIDForDeclPtr, llvm::MDNode::get(Context, DeclAddr));
-    }
+    if (auto const Stmt = Node.get<clang::Stmt>())
+      I->setMetadata(MDKindIDForStmtPtr,
+                     llvm::MDNode::get(Context, makeStmtNode(Stmt)));
+    else if (auto const Decl = Node.get<clang::Decl>())
+      I->setMetadata(MDKindIDForDeclPtr,
+                     llvm::MDNode::get(Context, makeDeclNode(Decl)));
+
+    MostRecentInstruction = I;
   }
 
   /// \brief Mark an LValue produced by the given Stmt.
