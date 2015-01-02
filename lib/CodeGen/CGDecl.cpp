@@ -32,6 +32,8 @@ using namespace CodeGen;
 
 
 void CodeGenFunction::EmitDecl(const Decl &D) {
+  seec::PushDeclForScope X(MDInserter, &D);
+
   switch (D.getKind()) {
   case Decl::TranslationUnit:
   case Decl::Namespace:
@@ -308,6 +310,8 @@ void CodeGenFunction::EmitStaticVarDecl(const VarDecl &D,
   // circular references.
   DMEntry = addr;
   CGM.setStaticLocalDeclAddress(&D, addr);
+
+  MDInserter.markLocal(D, addr);
 
   // We can't have a VLA here, but we can have a pointer to a VLA,
   // even though that doesn't really make any sense.
@@ -968,6 +972,8 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
   DMEntry = DeclPtr;
   emission.Address = DeclPtr;
 
+  MDInserter.markLocal(D, DeclPtr);
+
   // Emit debug info for local var declaration.
   if (HaveInsertPoint())
     if (CGDebugInfo *DI = getDebugInfo()) {
@@ -1059,6 +1065,8 @@ void CodeGenFunction::EmitAutoVarInit(const AutoVarEmission &emission) {
 
   // If this local has an initializer, emit it now.
   const Expr *Init = D.getInit();
+
+  seec::PushStmtForScope SeeCPush(MDInserter, Init);
 
   // If we are at an unreachable point, we don't need to emit the initializer
   // unless it contains a label.
@@ -1737,6 +1745,8 @@ void CodeGenFunction::EmitParmDecl(const VarDecl &D, llvm::Value *Arg,
   llvm::Value *&DMEntry = LocalDeclMap[&D];
   assert(!DMEntry && "Decl already exists in localdeclmap!");
   DMEntry = DeclPtr;
+
+  MDInserter.markParameter(D, DeclPtr);
 
   // Emit debug info for param declaration.
   if (CGDebugInfo *DI = getDebugInfo()) {

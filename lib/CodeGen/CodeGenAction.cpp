@@ -53,18 +53,22 @@ namespace clang {
 
     std::unique_ptr<llvm::Module> TheModule, LinkModule;
 
+    CodeGenAction &TheCodeGenAction;
+
   public:
     BackendConsumer(BackendAction action, DiagnosticsEngine &_Diags,
                     const CodeGenOptions &compopts,
                     const TargetOptions &targetopts,
                     const LangOptions &langopts, bool TimePasses,
                     const std::string &infile, llvm::Module *LinkModule,
-                    raw_ostream *OS, LLVMContext &C)
+                    raw_ostream *OS, LLVMContext &C,
+                    CodeGenAction &CGAct)
         : Diags(_Diags), Action(action), CodeGenOpts(compopts),
           TargetOpts(targetopts), LangOpts(langopts), AsmOutStream(OS),
           Context(), LLVMIRGeneration("LLVM IR Generation Time"),
           Gen(CreateLLVMCodeGen(Diags, infile, compopts, targetopts, C)),
-          LinkModule(LinkModule) {
+          LinkModule(LinkModule),
+          TheCodeGenAction(CGAct) {
       llvm::TimePassesIsEnabled = TimePasses;
     }
 
@@ -157,6 +161,9 @@ namespace clang {
           return;
         }
       }
+
+      // Allow SeeC to serialize the mapping information.
+      TheCodeGenAction.ModuleComplete(TheModule.get());
 
       // Install an inline asm handler so that diagnostics get printed through
       // our diagnostics hooks.
@@ -575,6 +582,11 @@ void CodeGenAction::EndSourceFileAction() {
   TheModule.reset(BEConsumer->takeModule());
 }
 
+void CodeGenAction::ModuleComplete(llvm::Module *Mod) {
+  // This is just used to notify SeeCCodeGenAction that we should serialize
+  // the mapping metadata.
+}
+
 llvm::Module *CodeGenAction::takeModule() { return TheModule.release(); }
 
 llvm::LLVMContext *CodeGenAction::takeLLVMContext() {
@@ -639,7 +651,8 @@ ASTConsumer *CodeGenAction::CreateASTConsumer(CompilerInstance &CI,
   BEConsumer = new BackendConsumer(BA, CI.getDiagnostics(), CI.getCodeGenOpts(),
                                    CI.getTargetOpts(), CI.getLangOpts(),
                                    CI.getFrontendOpts().ShowTimers, InFile,
-                                   LinkModuleToUse, OS.release(), *VMContext);
+                                   LinkModuleToUse, OS.release(), *VMContext,
+                                   *this);
   return BEConsumer;
 }
 

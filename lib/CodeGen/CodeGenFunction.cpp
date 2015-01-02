@@ -35,6 +35,7 @@ using namespace CodeGen;
 
 CodeGenFunction::CodeGenFunction(CodeGenModule &cgm, bool suppressNewContext)
     : CodeGenTypeCache(cgm), CGM(cgm), Target(cgm.getTarget()),
+      MDInserter(cgm.getModule()),
       Builder(cgm.getModule().getContext(), llvm::ConstantFolder(),
               CGBuilderInserterTy(this)),
       CapturedStmtInfo(nullptr), SanOpts(&CGM.getLangOpts().Sanitize),
@@ -1660,6 +1661,7 @@ void CodeGenFunction::InsertHelper(llvm::Instruction *I,
         CGM.getModule().getMDKindID("nosanitize"),
         llvm::MDNode::get(CGM.getLLVMContext(), ArrayRef<llvm::Value *>()));
   }
+  MDInserter.attachMetadata(I);
 }
 
 template <bool PreserveNames>
