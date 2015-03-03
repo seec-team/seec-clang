@@ -55,6 +55,8 @@ namespace clang {
 
     std::unique_ptr<llvm::Module> TheModule, LinkModule;
 
+    CodeGenAction &TheCodeGenAction;
+
   public:
     BackendConsumer(BackendAction Action, DiagnosticsEngine &Diags,
                     const HeaderSearchOptions &HeaderSearchOpts,
@@ -64,13 +66,15 @@ namespace clang {
                     const LangOptions &LangOpts, bool TimePasses,
                     const std::string &InFile, llvm::Module *LinkModule,
                     raw_pwrite_stream *OS, LLVMContext &C,
+                    CodeGenAction &CGAct,
                     CoverageSourceInfo *CoverageInfo = nullptr)
         : Diags(Diags), Action(Action), CodeGenOpts(CodeGenOpts),
           TargetOpts(TargetOpts), LangOpts(LangOpts), AsmOutStream(OS),
           Context(nullptr), LLVMIRGeneration("LLVM IR Generation Time"),
           Gen(CreateLLVMCodeGen(Diags, InFile, HeaderSearchOpts, PPOpts,
                                 CodeGenOpts, C, CoverageInfo)),
-          LinkModule(LinkModule) {
+          LinkModule(LinkModule),
+          TheCodeGenAction(CGAct) {
       llvm::TimePassesIsEnabled = TimePasses;
     }
 
@@ -165,6 +169,9 @@ namespace clang {
                 [=](const DiagnosticInfo &DI) { linkerDiagnosticHandler(DI); }))
           return;
       }
+
+      // Allow SeeC to serialize the mapping information.
+      TheCodeGenAction.ModuleComplete(TheModule.get());
 
       // Install an inline asm handler so that diagnostics get printed through
       // our diagnostics hooks.
@@ -603,6 +610,11 @@ void CodeGenAction::EndSourceFileAction() {
   TheModule = BEConsumer->takeModule();
 }
 
+void CodeGenAction::ModuleComplete(llvm::Module *Mod) {
+  // This is just used to notify SeeCCodeGenAction that we should serialize
+  // the mapping metadata.
+}
+
 std::unique_ptr<llvm::Module> CodeGenAction::takeModule() {
   return std::move(TheModule);
 }
@@ -673,7 +685,7 @@ CodeGenAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
       BA, CI.getDiagnostics(), CI.getHeaderSearchOpts(),
       CI.getPreprocessorOpts(), CI.getCodeGenOpts(), CI.getTargetOpts(),
       CI.getLangOpts(), CI.getFrontendOpts().ShowTimers, InFile,
-      LinkModuleToUse, OS, *VMContext, CoverageInfo));
+      LinkModuleToUse, OS, *VMContext, *this, CoverageInfo));
   BEConsumer = Result.get();
   return std::move(Result);
 }
