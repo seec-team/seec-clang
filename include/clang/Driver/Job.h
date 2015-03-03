@@ -186,6 +186,7 @@ public:
   /// Clear the job list.
   void clear();
 
+  list_type &getJobsMutable() { return Jobs; }
   const list_type &getJobs() const { return Jobs; }
 
   size_type size() const { return Jobs.size(); }
