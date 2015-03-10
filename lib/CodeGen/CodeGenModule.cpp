@@ -3539,6 +3539,8 @@ void CodeGenModule::EmitDeclMetadata() {
   // StaticLocalDeclMap
   for (auto &I : MangledDeclNames) {
     llvm::GlobalValue *Addr = getModule().getNamedValue(I.second);
+    if (!Addr)
+      continue;
     EmitGlobalDeclMetadata(*this, GlobalMetadata, I.first, Addr);
   }
 }
