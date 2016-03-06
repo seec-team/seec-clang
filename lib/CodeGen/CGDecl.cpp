@@ -39,6 +39,8 @@ using namespace clang;
 using namespace CodeGen;
 
 void CodeGenFunction::EmitDecl(const Decl &D) {
+  seec::PushDeclForScope X(MDInserter, &D);
+
   switch (D.getKind()) {
   case Decl::BuiltinTemplate:
   case Decl::TranslationUnit:
@@ -384,6 +386,8 @@ void CodeGenFunction::EmitStaticVarDecl(const VarDecl &D,
   // Store into LocalDeclMap before generating initializer to handle
   // circular references.
   setAddrOfLocalVar(&D, Address(addr, alignment));
+
+  MDInserter.markLocal(D, addr);
 
   // We can't have a VLA here, but we can have a pointer to a VLA,
   // even though that doesn't really make any sense.
@@ -1121,6 +1125,8 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
   setAddrOfLocalVar(&D, address);
   emission.Addr = address;
 
+  MDInserter.markLocal(D, address.getPointer());
+
   // Emit debug info for local var declaration.
   if (HaveInsertPoint())
     if (CGDebugInfo *DI = getDebugInfo()) {
@@ -1220,6 +1226,8 @@ void CodeGenFunction::EmitAutoVarInit(const AutoVarEmission &emission) {
 
   // If this local has an initializer, emit it now.
   const Expr *Init = D.getInit();
+
+  seec::PushStmtForScope SeeCPush(MDInserter, Init);
 
   // If we are at an unreachable point, we don't need to emit the initializer
   // unless it contains a label.
@@ -1896,6 +1904,8 @@ void CodeGenFunction::EmitParmDecl(const VarDecl &D, ParamValue Arg,
     EmitStoreOfScalar(ArgVal, lv, /* isInitialization */ true);
 
   setAddrOfLocalVar(&D, DeclPtr);
+
+  MDInserter.markParameter(D, DeclPtr.getPointer());
 
   // Emit debug info for param declaration.
   if (CGDebugInfo *DI = getDebugInfo()) {

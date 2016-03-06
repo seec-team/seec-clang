@@ -51,6 +51,7 @@ using namespace clang;
 FileManager::FileManager(const FileSystemOptions &FSO,
                          IntrusiveRefCntPtr<vfs::FileSystem> FS)
     : FS(std::move(FS)), FileSystemOpts(FSO), SeenDirEntries(64),
+      DisableNonVirtualFiles(false),
       SeenFileEntries(64), NextFileUID(0) {
   NumDirLookups = NumFileLookups = 0;
   NumDirCacheMisses = NumFileCacheMisses = 0;
@@ -227,6 +228,9 @@ const FileEntry *FileManager::getFile(StringRef Filename, bool openFile,
 
   ++NumFileCacheMisses;
 
+  if (DisableNonVirtualFiles)
+    return 0;
+
   // By default, initialize it to invalid.
   NamedFileEnt.second = NON_EXISTENT_FILE;
 
@@ -353,7 +357,8 @@ FileManager::getVirtualFile(StringRef Filename, off_t Size,
   // Check to see if the file exists. If so, drop the virtual file
   FileData Data;
   const char *InterndFileName = NamedFileEnt.first().data();
-  if (getStatValue(InterndFileName, Data, true, nullptr) == 0) {
+  if (!DisableNonVirtualFiles &&
+      getStatValue(InterndFileName, Data, true, nullptr) == 0) {
     Data.Size = Size;
     Data.ModTime = ModificationTime;
     UFE = &UniqueRealFiles[Data.UniqueID];

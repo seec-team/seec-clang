@@ -107,6 +107,8 @@ namespace clang {
     // refers to.
     llvm::Module *CurLinkModule = nullptr;
 
+    CodeGenAction &TheCodeGenAction;
+
   public:
     BackendConsumer(BackendAction Action, DiagnosticsEngine &Diags,
                     const HeaderSearchOptions &HeaderSearchOpts,
@@ -117,6 +119,7 @@ namespace clang {
                     const std::string &InFile,
                     SmallVector<LinkModule, 4> LinkModules,
                     std::unique_ptr<raw_pwrite_stream> OS, LLVMContext &C,
+                    CodeGenAction &CGAct,
                     CoverageSourceInfo *CoverageInfo = nullptr)
         : Diags(Diags), Action(Action), HeaderSearchOpts(HeaderSearchOpts),
           CodeGenOpts(CodeGenOpts), TargetOpts(TargetOpts), LangOpts(LangOpts),
@@ -125,7 +128,9 @@ namespace clang {
           LLVMIRGenerationRefCount(0),
           Gen(CreateLLVMCodeGen(Diags, InFile, HeaderSearchOpts, PPOpts,
                                 CodeGenOpts, C, CoverageInfo)),
-          LinkModules(std::move(LinkModules)) {
+          LinkModules(std::move(LinkModules)),
+          TheCodeGenAction(CGAct)
+    {
       llvm::TimePassesIsEnabled = TimePasses;
     }
     llvm::Module *getModule() const { return Gen->GetModule(); }
@@ -288,6 +293,9 @@ namespace clang {
         return;
 
       EmbedBitcode(getModule(), CodeGenOpts, llvm::MemoryBufferRef());
+
+      // Allow SeeC to serialize the mapping information.
+      TheCodeGenAction.ModuleComplete(TheModule.get());
 
       EmitBackendOutput(Diags, HeaderSearchOpts, CodeGenOpts, TargetOpts,
                         LangOpts, C.getTargetInfo().getDataLayout(),
@@ -814,6 +822,11 @@ void CodeGenAction::EndSourceFileAction() {
   TheModule = BEConsumer->takeModule();
 }
 
+void CodeGenAction::ModuleComplete(llvm::Module *Mod) {
+  // This is just used to notify SeeCCodeGenAction that we should serialize
+  // the mapping metadata.
+}
+
 std::unique_ptr<llvm::Module> CodeGenAction::takeModule() {
   return std::move(TheModule);
 }
@@ -888,7 +901,7 @@ CodeGenAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
       BA, CI.getDiagnostics(), CI.getHeaderSearchOpts(),
       CI.getPreprocessorOpts(), CI.getCodeGenOpts(), CI.getTargetOpts(),
       CI.getLangOpts(), CI.getFrontendOpts().ShowTimers, InFile,
-      std::move(LinkModules), std::move(OS), *VMContext, CoverageInfo));
+      std::move(LinkModules), std::move(OS), *VMContext, *this, CoverageInfo));
   BEConsumer = Result.get();
 
   // Enable generating macro debug info only when debug info is not disabled and

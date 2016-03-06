@@ -40,6 +40,15 @@ Command::Command(const Action &Source, const Tool &Creator,
       InputFilenames.push_back(II.getFilename());
 }
 
+// SeeC
+Command::Command(const Action &Source, const Tool &Creator,
+                 const char *Executable, const ArgStringList &Arguments,
+                 const ArgStringList &InputFilenames)
+    : Source(Source), Creator(Creator), Executable(Executable),
+      Arguments(Arguments), ResponseFile(nullptr),
+      InputFilenames(InputFilenames)
+{}
+
 /// @brief Check if the compiler flag in question should be skipped when
 /// emitting a reproducer. Also track how many arguments it has and if the
 /// option is some kind of include path.

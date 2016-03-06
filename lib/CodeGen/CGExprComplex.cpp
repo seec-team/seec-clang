@@ -93,7 +93,12 @@ public:
 
   ComplexPairTy Visit(Expr *E) {
     ApplyDebugLocation DL(CGF, E);
-    return StmtVisitor<ComplexExprEmitter, ComplexPairTy>::Visit(E);
+    CodeGen::seec::PushStmtForScope X(CGF.MDInserter, E);
+    ComplexPairTy Ret =
+      StmtVisitor<ComplexExprEmitter, ComplexPairTy>::Visit(E);
+    if (Ret.first && Ret.second)
+      CGF.MDInserter.markRValue(RValue::getComplex(Ret.first, Ret.second), E);
+    return Ret;
   }
 
   ComplexPairTy VisitStmt(Stmt *S) {

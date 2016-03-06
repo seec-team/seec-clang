@@ -3480,6 +3480,8 @@ struct DisableDebugLocationUpdates {
 
 void CodeGenFunction::EmitCallArg(CallArgList &args, const Expr *E,
                                   QualType type) {
+  seec::PushStmtForScope SeeCPushE(MDInserter, E);
+
   DisableDebugLocationUpdates Dis(*this, E);
   if (const ObjCIndirectCopyRestoreExpr *CRE
         = dyn_cast<ObjCIndirectCopyRestoreExpr>(E)) {

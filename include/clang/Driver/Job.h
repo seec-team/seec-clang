@@ -89,6 +89,11 @@ public:
   Command(const Action &Source, const Tool &Creator, const char *Executable,
           const llvm::opt::ArgStringList &Arguments,
           ArrayRef<InputInfo> Inputs);
+  // SeeC
+  Command(const Action &Source, const Tool &Creator, const char *Executable,
+          const llvm::opt::ArgStringList &Arguments,
+          const llvm::opt::ArgStringList &InputFilenames);
+
   // FIXME: This really shouldn't be copyable, but is currently copied in some
   // error handling in Driver::generateCompilationDiagnostics.
   Command(const Command &) = default;
@@ -108,6 +113,11 @@ public:
 
   /// Set to pass arguments via a response file when launching the command
   void setResponseFile(const char *FileName);
+
+  /// SeeC: get input file names.
+  llvm::opt::ArgStringList const &getInputFilenames() {
+    return InputFilenames;
+  }
 
   /// Set an input file list, necessary if we need to use a response file but
   /// the tool being called only supports input files lists.
@@ -183,6 +193,7 @@ public:
   /// Clear the job list.
   void clear();
 
+  list_type &getJobsMutable() { return Jobs; }
   const list_type &getJobs() const { return Jobs; }
 
   bool empty() const { return Jobs.empty(); }
