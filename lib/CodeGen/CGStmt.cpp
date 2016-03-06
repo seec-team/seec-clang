@@ -49,6 +49,8 @@ void CodeGenFunction::EmitStmt(const Stmt *S) {
   assert(S && "Null statement?");
   PGO.setCurrentStmt(S);
 
+  seec::PushStmtForScope X(MDInserter, S);
+
   // These statements have their own debug info handling.
   if (EmitSimpleStmt(S))
     return;

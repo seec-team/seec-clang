@@ -65,9 +65,16 @@ Address CodeGenFunction::CreateTempAlloca(llvm::Type *Ty, CharUnits Align,
 /// block.
 llvm::AllocaInst *CodeGenFunction::CreateTempAlloca(llvm::Type *Ty,
                                                     const Twine &Name) {
+  llvm::AllocaInst *I;
+
   if (!Builder.isNamePreserving())
-    return new llvm::AllocaInst(Ty, nullptr, "", AllocaInsertPt);
-  return new llvm::AllocaInst(Ty, nullptr, Name, AllocaInsertPt);
+    I = new llvm::AllocaInst(Ty, nullptr, "", AllocaInsertPt);
+  else
+    I = new llvm::AllocaInst(Ty, nullptr, Name, AllocaInsertPt);
+
+  MDInserter.attachMetadata(I);
+
+  return I;
 }
 
 /// CreateDefaultAlignTempAlloca - This creates an alloca with the
@@ -139,6 +146,14 @@ void CodeGenFunction::EmitIgnoredExpr(const Expr *E) {
 RValue CodeGenFunction::EmitAnyExpr(const Expr *E,
                                     AggValueSlot aggSlot,
                                     bool ignoreResult) {
+  RValue RetVal = EmitAnyExprImpl(E, aggSlot, ignoreResult);
+  MDInserter.markRValue(RetVal, E);
+  return RetVal;
+}
+
+RValue CodeGenFunction::EmitAnyExprImpl(const Expr *E,
+                                        AggValueSlot aggSlot,
+                                        bool ignoreResult) {
   switch (getEvaluationKind(E->getType())) {
   case TEK_Scalar:
     return RValue::get(EmitScalarExpr(E, ignoreResult));
@@ -942,6 +957,18 @@ LValue CodeGenFunction::EmitCheckedLValue(const Expr *E, TypeCheckKind TCK) {
 /// length type, this is not possible.
 ///
 LValue CodeGenFunction::EmitLValue(const Expr *E) {
+  seec::PushStmtForScope X(MDInserter, E);
+
+  // Call EmitLValueImpl to do the real work.
+  LValue RetVal = EmitLValueImpl(E);
+
+  // Add SeeC mappings.
+  MDInserter.markLValue(RetVal, E);
+
+  return RetVal;
+}
+
+LValue CodeGenFunction::EmitLValueImpl(const Expr *E) {
   ApplyDebugLocation DL(*this, E);
   switch (E->getStmtClass()) {
   default: return EmitUnsupportedLValue(E, "l-value expression");
@@ -1413,6 +1440,12 @@ void CodeGenFunction::EmitStoreOfScalar(llvm::Value *value, LValue lvalue,
 /// method emits the address of the lvalue, then loads the result as an rvalue,
 /// returning the rvalue.
 RValue CodeGenFunction::EmitLoadOfLValue(LValue LV, SourceLocation Loc) {
+  RValue RetVal = EmitLoadOfLValueImpl(LV, Loc);
+  // MDInserter.markRValue(RetVal);
+  return RetVal;
+}
+
+RValue CodeGenFunction::EmitLoadOfLValueImpl(LValue LV, SourceLocation Loc) {
   if (LV.isObjCWeak()) {
     // load of a __weak object.
     Address AddrWeakObj = LV.getAddress();

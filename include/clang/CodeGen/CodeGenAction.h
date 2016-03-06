@@ -63,6 +63,8 @@ public:
   /// Take the LLVM context used by this action.
   llvm::LLVMContext *takeLLVMContext();
 
+  virtual void ModuleComplete(llvm::Module *Mod);
+
   BackendConsumer *BEConsumer;
 };
 
