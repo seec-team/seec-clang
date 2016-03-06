@@ -37,6 +37,15 @@ Command::Command(const Action &Source, const Tool &Creator,
       InputFilenames.push_back(II.getFilename());
 }
 
+// SeeC
+Command::Command(const Action &Source, const Tool &Creator,
+                 const char *Executable, const ArgStringList &Arguments,
+                 const ArgStringList &InputFilenames)
+    : Source(Source), Creator(Creator), Executable(Executable),
+      Arguments(Arguments), ResponseFile(nullptr),
+      InputFilenames(InputFilenames)
+{}
+
 static int skipArgs(const char *Flag, bool HaveCrashVFS) {
   // These flags are all of the form -Flag <Arg> and are treated as two
   // arguments.  Therefore, we need to skip the flag and the next argument.
