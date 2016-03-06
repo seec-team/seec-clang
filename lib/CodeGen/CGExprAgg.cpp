@@ -100,6 +100,7 @@ public:
   //===--------------------------------------------------------------------===//
 
   void Visit(Expr *E) {
+    CodeGen::seec::PushStmtForScope X(CGF.MDInserter, E);
     ApplyDebugLocation DL(CGF, E);
     StmtVisitor<AggExprEmitter>::Visit(E);
   }

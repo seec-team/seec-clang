@@ -131,6 +131,8 @@ class FileManager : public RefCountedBase<FileManager> {
   /// \brief The virtual files that we have allocated.
   SmallVector<std::unique_ptr<FileEntry>, 4> VirtualFileEntries;
 
+  bool DisableNonVirtualFiles;
+
   /// \brief A cache that maps paths to directory entries (either real or
   /// virtual) we have looked up
   ///
@@ -232,6 +234,11 @@ public:
   /// The file itself is not accessed.
   const FileEntry *getVirtualFile(StringRef Filename, off_t Size,
                                   time_t ModificationTime);
+
+  /// \brief Control access to the non-virtual filesystem.
+  void setDisableNonVirtualFiles(const bool Value) {
+    DisableNonVirtualFiles = Value;
+  }
 
   /// \brief Open the specified file as a MemoryBuffer, returning a new
   /// MemoryBuffer if successful, otherwise returning null.
