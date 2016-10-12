@@ -182,7 +182,7 @@ namespace clang {
       EmbedBitcode(getModule(), CodeGenOpts, llvm::MemoryBufferRef());
 
       // Allow SeeC to serialize the mapping information.
-      TheCodeGenAction.ModuleComplete(TheModule.get());
+      TheCodeGenAction.ModuleComplete(Gen->GetModule());
 
       EmitBackendOutput(Diags, CodeGenOpts, TargetOpts, LangOpts,
                         C.getTargetInfo().getDataLayout(),
