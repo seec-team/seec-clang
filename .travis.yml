@@ -39,7 +39,7 @@ install:
     cd ${DEPS_INSTALL}
     if [ ! -d "include/llvm" ]; then
       SEEC_LLVM_BUILT_XZ_FILENAME="seec_llvm_travis_build_${TRAVIS_OS_NAME}_${CC}.tar.xz"
-      travis_retry wget --no-check-certificate --quiet -O - https://github.com/seec-team/llvm-with-seec-clang/releases/download/${SEEC_CLANG_RELEASE_TAG}/${SEEC_CLANG_BUILT_XZ_FILENAME} | tar -xJ
+      travis_retry wget --no-check-certificate --quiet -O - https://github.com/seec-team/llvm-with-seec-clang/releases/download/${SEEC_LLVM_RELEASE_TAG}/${SEEC_LLVM_BUILT_XZ_FILENAME} | tar -xJ
     fi
 
 #
