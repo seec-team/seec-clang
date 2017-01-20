@@ -15,7 +15,7 @@ IF %COMPILER%==msys2 (
   @echo on
   SET "PATH=C:\%MSYS2_DIR%\%MSYSTEM%\bin;C:\%MSYS2_DIR%\usr\bin;%PATH%"
 
-  pacman -S --noconfirm mingw-w64-x86_64-clang mingw-w64-x86_64-libc++
+  pacman -S --noconfirm mingw-w64-x86_64-gcc
 
   REM download and extract llvm build artifact
   mkdir c:\projects\deps
