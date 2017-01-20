@@ -1,0 +1,17 @@
+version: '3.9.0.{build}'
+
+environment:
+  matrix:
+  - COMPILER: msys2
+    PLATFORM: x64
+    MSYS2_DIR: msys64
+    MSYSTEM: MINGW64
+
+install:
+  - '%APPVEYOR_BUILD_FOLDER%\scripts\appveyor\install.bat'
+
+build_script:
+  - '%APPVEYOR_BUILD_FOLDER%\scripts\appveyor\build.bat'
+
+artifacts:
+  - path: seec_clang_install_3.9.0.zip
