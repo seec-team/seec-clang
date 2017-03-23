@@ -20,8 +20,8 @@ IF %COMPILER%==msys2 (
   REM download and extract llvm build artifact
   mkdir c:\projects\deps
   cd c:\projects\deps
-  appveyor DownloadFile https://ci.appveyor.com/api/projects/mheinsen/llvm-with-seec-clang/artifacts/llvm_install_3.9.0.zip?branch=release_39_appveyor
-  7z x llvm_install_3.9.0.zip -y
+  appveyor DownloadFile https://ci.appveyor.com/api/projects/mheinsen/llvm-with-seec-clang/artifacts/llvm_install_%LLVM_VERSION_STRING%.zip?branch=%LLVM_BRANCH%
+  7z x llvm_install_%LLVM_VERSION_STRING%.zip -y
   dir c:\projects\deps
 
   REM causes problems linking libclang:
