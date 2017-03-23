@@ -3,4 +3,4 @@ cd "/c/projects/seec_clang_build"
 make -j4
 make install
 cd $APPVEYOR_BUILD_FOLDER
-7z a seec_clang_install_3.9.0.zip "C:\\projects\\seec_clang_install\\*"
+7z a seec_clang_install_$LLVM_VERSION_STRING.zip "C:\\projects\\seec_clang_install\\*"
