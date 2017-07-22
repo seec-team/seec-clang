@@ -1,33 +1,19 @@
 language: cpp
 
-# Get more modern versions of GCC and Clang to build with on Linux.
-# c.f. http://genbattle.bitbucket.org/blog/2016/01/17/c++-travis-ci/
 matrix:
   include:
     - os: linux
+      dist: trusty
       compiler: clang
-      addons:
-        apt:
-          sources:
-            - ubuntu-toolchain-r-test
-            - llvm-toolchain-precise-3.6
-          packages:
-            - clang-3.6
       env: 
-        - COMPILER_CXX=clang++-3.6
-        - COMPILER_CC=clang-3.6
+        - COMPILER_CXX=clang++
+        - COMPILER_CC=clang
     - os: linux
+      dist: trusty
       compiler: gcc
-      addons:
-        apt:
-          sources:
-            - ubuntu-toolchain-r-test
-          packages:
-            - gcc-4.8
-            - g++-4.8
       env: 
-        - COMPILER_CXX=g++-4.8
-        - COMPILER_CC=gcc-4.8
+        - COMPILER_CXX=g++
+        - COMPILER_CC=gcc
     - os: osx
       compiler: clang
       env: 
