@@ -67,6 +67,7 @@ Address CodeGenFunction::CreateTempAlloca(llvm::Type *Ty, CharUnits Align,
                                           bool CastToDefaultAddrSpace) {
   auto Alloca = CreateTempAlloca(Ty, Name, ArraySize);
   Alloca->setAlignment(Align.getQuantity());
+  MDInserter.attachMetadata(Alloca);
   llvm::Value *V = Alloca;
   // Alloca always returns a pointer in alloca address space, which may
   // be different from the type defined by the language. For example,
@@ -85,7 +86,6 @@ Address CodeGenFunction::CreateTempAlloca(llvm::Type *Ty, CharUnits Align,
         Ty->getPointerTo(DestAddrSpace), /*non-null*/ true);
   }
 
-  MDInserter.attachMetadata(V);
   return Address(V, Align);
 }
 
