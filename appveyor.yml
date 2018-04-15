@@ -1,8 +1,8 @@
-version: '4.0.0.{build}'
+version: '6.0.{build}'
 
 environment:
-  LLVM_VERSION_STRING: '4.0.0'
-  LLVM_BRANCH: 'release_40_appveyor'
+  LLVM_VERSION_STRING: '6.0'
+  LLVM_BRANCH: 'release_60_appveyor'
   matrix:
   - COMPILER: msys2
     PLATFORM: x64
